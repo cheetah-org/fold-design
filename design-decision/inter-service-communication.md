@@ -37,7 +37,7 @@ The core-flow docs name *services*; the backend implements them as *modules* in 
 | *(not in flows)* | `discovery` | Feeds the woman's deck; owns the event-fed candidate pool, see §7.2. |
 | *(not in flows)* | `commons` | Shared DTO contracts only — payloads for both sync returns and event records. |
 | Database | Single Postgres | One datasource; each module owns its own tables; cross-module references are plain IDs. |
-| SMS Gateway / FCM | External | Out of module boundaries: Firebase Auth (OTP), FCM (push), Firebase Storage. |
+| Google OAuth / FCM | External | Out of module boundaries: Google OAuth (auth), FCM (push), Firebase Storage. |
 
 ---
 
@@ -66,14 +66,14 @@ sequenceDiagram
     participant Ratio as Ratio Service
     participant UserSvc as User Service
     participant DB as Database
-    participant SMS as SMS Gateway
+    participant Google as Google OAuth
 
-    User ->> Client: Enter DOB, phone number
-    Client ->> Auth: Send OTP request
+    User ->> Client: Sign in with Google
+    Client ->> Google: OAuth sign-in
+    Google -->> Client: Token + name, DOB, email
+    Client ->> Auth: Send Google ID token
     Auth ->> DB: Check if user exists
-    Auth ->> SMS: Send OTP
-    User ->> Client: Enter OTP
-    Client ->> Auth: Verify OTP
+    Auth ->> DB: Store AUTH_CREDENTIAL (google_sub, email)
     Auth ->> Ratio: Check gender ratio
     alt If woman
         Ratio -->> Auth: Ratio OK, proceed
@@ -103,7 +103,7 @@ sequenceDiagram
 | R1 | Auth → Ratio | Check gender ratio | **SYNC** | In-process client-interface call (`RatioClient.checkGenderRatio()`) into the `ratio` module | HTTP client-interface |
 | R2 | Ratio → Auth | Admit from queue | **ASYNC** | Domain event `AdmittedFromQueue` → auth/user listener flips account active | Broker + outbox → listener |
 | R3 | Ratio → Client | Queue update notification | **ASYNC** | Domain event `QueueStatusChanged` → `notifications` → FCM push | Broker → `notifications` → FCM |
-| — | Auth → SMS | Send OTP | EXTERNAL | Firebase Auth | n/a (external) |
+| — | Client → Google | OAuth sign-in | EXTERNAL | Google OAuth | n/a (external) |
 | — | Auth → DB | User create / status update | DB | In the real codebase this is the `users` module writing its own row — see §7.1 | — |
 
 ### 4.2 Like & Match — `like-match-flow`
@@ -264,7 +264,7 @@ Every inter-service interaction from the four flows, consolidated.
 
 The flows above are faithful to the core-flow diagrams. Where the real backend differs, it's called out here — nothing was silently rewritten.
 
-1. **Auth creates the user (reg-flow) vs `users` owns `User`.** In the modulith, OTP is verified and the account is created by the `users` module (auth only resolves the principal). The flow's `Auth ->> DB: Create user` maps to a write inside `users`. After a successful registration, `users` publishes `UserRegistered`, and profile/matching/messaging/notifications seeds their local projections from it — a fan-out the flow diagram doesn't show.
+1. **Auth creates the user (reg-flow) vs `users` owns `User`.** In the modulith, the Google ID token is verified and the account is created by the `users` module (auth only resolves the principal). The flow's `Auth ->> DB: Create user` maps to a write inside `users`. After a successful registration, `users` publishes `UserRegistered`, and profile/matching/messaging/notifications seeds their local projections from it — a fan-out the flow diagram doesn't show.
 
 2. **`Matching` serves the feed (like-match-flow) vs `discovery` owns the deck.** The woman's feed and the eligible-men pool belong to `discovery`; `matching` handles swipes/likes/match records. The pool is an event-fed projection (L1), not a per-request query. Deck cards are composed at the edge from `users` + `profile` data via client-interface reads.
 

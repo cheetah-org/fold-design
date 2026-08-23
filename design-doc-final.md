@@ -24,7 +24,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 - Minimum age to register: 21 for everyone
 - A woman is only shown men who are strictly younger than her
 - A man is only shown to women who are strictly older than him
-- Age is self-declared at registration via date of birth
+- Age is taken from the date of birth fetched from the user's Google account at registration
 
 ### 2. Women Outnumber Men — Always
 - At any point, the number of active women must be greater than or equal to the number of active men
@@ -62,8 +62,8 @@ A dating app with one rule: the woman must always be older than the man she matc
 
 ### Registration Flow
 ```
-Download → Enter date of birth → Age check (must be 21+) 
-→ Phone OTP → Profile creation → Done
+Download → Sign in with Google 
+→ Fetch name, DOB, email from Google → Age check (must be 21+) → Profile creation → Done
 ```
 
 ### For Men — Queue Experience
@@ -177,7 +177,7 @@ No ads. Ever.
 |---|---|
 | Age gate | 21+ for everyone |
 | Younger only or same-age? | Strictly younger only |
-| Age verification | Self-declared DOB at registration |
+| Age verification | DOB fetched from Google account at registration |
 | Can men browse? | No |
 | Dwell-time auto-like | Removed |
 | Chat duration | 48 hours per message, no extend |
@@ -192,7 +192,7 @@ No ads. Ever.
 | Profile access post-unmatch | Gone — same message whether unmatched or account deleted |
 | Reporting | Immediate shadow ban on report, unban if not upheld, permanent suspend if upheld, false reporters also suspended |
 | Platform | Mobile only, no web app |
-| Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Firebase (Auth, FCM, Storage) + Railway |
+| Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Google OAuth + Firebase (FCM, Storage) + Railway |
 | Architecture | Modulith — single deployment, strict module boundaries |
 | Discovery algorithm | To be decided at build time |
 
@@ -207,7 +207,7 @@ No ads. Ever.
 - **Real-time chat:** Spring WebSocket
 - **Push notifications:** Firebase Cloud Messaging (free tier)
 - **File storage:** Firebase Storage (free tier, 5GB)
-- **Auth/OTP:** Firebase Auth — phone OTP (free tier)
+- **Auth:** Google OAuth — sign-in, fetch name/DOB/email
 - **Hosting:** Railway or Render (free/low-cost tier to start)
 
 ---

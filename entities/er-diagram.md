@@ -5,18 +5,10 @@ erDiagram
     %% ============ NORTH: AUTH SERVICE ============
     AUTH_CREDENTIAL {
         string id PK
-        string uid UK "Firebase UID"
+        string google_sub UK "Google OAuth sub"
         string user_id FK
-        string phone
+        string email
         datetime created_at
-    }
-    OTP_CHALLENGE {
-        string id PK
-        string phone
-        string code_hash
-        int attempts
-        datetime expires_at
-        boolean consumed
     }
 
     %% ============ NORTHWEST: RATIO SERVICE ============
@@ -63,8 +55,9 @@ erDiagram
     %% ============ CENTER: USER SERVICE ============
     USER {
         string id PK
+        string name "from Google"
         enum gender "FEMALE | MALE"
-        date dob
+        date dob "from Google"
         string city
         enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
         datetime created_at
@@ -216,8 +209,9 @@ erDiagram
     %% Owned entities
     USER {
         string id PK
+        string name "from Google"
         enum gender "FEMALE | MALE"
-        date dob
+        date dob "from Google"
         string city
         enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
         datetime created_at
@@ -304,25 +298,17 @@ erDiagram
 
 # auth-service
 
-Thin credential store. CRUD for `AUTH_CREDENTIAL`, `OTP_CHALLENGE`. Mints `AUTH_CREDENTIAL` on OTP verify and hands a `user_id` to User Service; never owns `USER`.
+Thin credential store. CRUD for `AUTH_CREDENTIAL`. Mints `AUTH_CREDENTIAL` on Google OAuth sign-in (fetching name, DOB, email from the Google account) and hands a `user_id` to User Service; never owns `USER`.
 
 ```mermaid
 erDiagram
     %% Owned entities
     AUTH_CREDENTIAL {
         string id PK
-        string uid UK "Firebase UID"
+        string google_sub UK "Google OAuth sub"
         string user_id FK
-        string phone
+        string email
         datetime created_at
-    }
-    OTP_CHALLENGE {
-        string id PK
-        string phone
-        string code_hash
-        int attempts
-        datetime expires_at
-        boolean consumed
     }
 
     %% External reference (owned by User Service)

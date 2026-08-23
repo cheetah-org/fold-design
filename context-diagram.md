@@ -7,7 +7,7 @@ graph TD
     Man -.-> |Registers, Receives Likes, Chats| DatingApp[Dating App]
     Admin -.-> |Manages, Monitors| DatingApp[Dating App]
     
-    DatingApp -.-> |Sends OTP| SMS[SMS Gateway] 
+    DatingApp -.-> |Signs in| Google[Google OAuth] 
     DatingApp -.-> |Sends Push| Push[Push Notification Service]
     DatingApp -.-> |Uploads| AppStore[App Stores]
     DatingApp -.-> |Reports| Analytics[Analytics Platform]
