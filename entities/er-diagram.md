@@ -63,7 +63,6 @@ erDiagram
     %% ============ CENTER: USER SERVICE ============
     USER {
         string id PK
-        string auth_credential_id FK
         enum gender "FEMALE | MALE"
         date dob
         string city
@@ -217,7 +216,6 @@ erDiagram
     %% Owned entities
     USER {
         string id PK
-        string auth_credential_id FK
         enum gender "FEMALE | MALE"
         date dob
         string city
@@ -301,7 +299,7 @@ erDiagram
     %% Relationships
     USER ||--o{ ADMISSION_QUEUE : "queued (external)"
     USER ||--o{ RATIO_EVENT_LOG : "status event (external)"
-    RATIO_STATE ||--|| ADMISSION_QUEUE : "drives admission (external, no FK)"
+    RATIO_STATE ||--o{ ADMISSION_QUEUE : "drives admission (external, no FK)"
 ```
 
 # auth-service
