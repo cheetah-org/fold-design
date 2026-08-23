@@ -1,4 +1,3 @@
-```mermaid
 sequenceDiagram
     participant Woman as Woman
     participant Client as Mobile Client
@@ -31,4 +30,3 @@ sequenceDiagram
     Matching ->> Notif: Send match notifications
     Notif ->> Woman: Match notification
     Notif ->> Man: Match notification
-```

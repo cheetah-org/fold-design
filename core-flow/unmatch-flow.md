@@ -1,4 +1,3 @@
-```mermaid
 sequenceDiagram
     participant User1 as User1
     participant Client1 as Mobile Client (User1)
@@ -20,4 +19,3 @@ sequenceDiagram
     User2 ->> Client2: Delete chat (optional)
     Client2 ->> Chat: Delete chat request
     Chat ->> DB: Delete messages (if not already deleted)
-```

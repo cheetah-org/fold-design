@@ -1,4 +1,3 @@
-```mermaid
 sequenceDiagram
     participant User1 as User1
     participant Client1 as Mobile Client (User1)
@@ -27,4 +26,3 @@ sequenceDiagram
             DB -->> Chat: No expiring messages
         end
     end
-```

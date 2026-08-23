@@ -1,4 +1,3 @@
-```mermaid
 sequenceDiagram
     participant User as User
     participant Client as Mobile Client
@@ -35,4 +34,3 @@ sequenceDiagram
         Auth ->> DB: Update user status
         Auth ->> Client: Registration successful
     end
-```
