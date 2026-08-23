@@ -1,3 +1,4 @@
+```mermaid
 graph LR
     Client[[Mobile Client]]
     
@@ -48,3 +49,4 @@ graph LR
     
     NotificationService --> Push
     AuthService --> Google
+```
