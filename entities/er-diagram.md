@@ -23,7 +23,7 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "f(onboarding_time, referral_count)"
+        int rank "f(onboarding_time)"
         datetime admitted_at
         datetime created_at
     }
@@ -68,7 +68,6 @@ erDiagram
         date dob
         string city
         enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
-        int referrals
         datetime created_at
     }
     PROFILE {
@@ -98,15 +97,6 @@ erDiagram
         string blocker_id FK
         string blocked_id FK
         string report_id FK, UK "1:1 REPORT"
-        datetime created_at
-    }
-    REFERRAL {
-        string id PK
-        string referrer_id FK "USER.id - owns the code"
-        string referee_id FK "USER.id - optional, null until used"
-        string referralCode UK "8-char alphanumeric"
-        int usageCount "fixed usage limit"
-        datetime expiryDate "created_at + 28 days"
         datetime created_at
     }
 
@@ -216,13 +206,11 @@ erDiagram
     USER ||--o{ REPORT : "is reported"
     USER ||--o{ BLOCK : "blocks as blocker"
     REPORT ||--o| BLOCK : "block creates report"
-    USER ||--o{ REFERRAL : "refers (referrer)"
-    USER ||--o{ REFERRAL : "referred (referee, nullable)"
 ```
 
 # user-service
 
-Owns identity, profile, moderation, and referrals. CRUD for `USER`, `PROFILE`, `PHOTO`, `REPORT`, `BLOCK`, `REFERRAL`. Reads `AUTH_CREDENTIAL` (created by Auth Service); applies `status` changes emitted by Ratio Service as events.
+Owns identity, profile, and moderation. CRUD for `USER`, `PROFILE`, `PHOTO`, `REPORT`, `BLOCK`. Reads `AUTH_CREDENTIAL` (created by Auth Service); applies `status` changes emitted by Ratio Service as events.
 
 ```mermaid
 erDiagram
@@ -234,7 +222,6 @@ erDiagram
         date dob
         string city
         enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
-        int referrals
         datetime created_at
     }
     PROFILE {
@@ -266,15 +253,6 @@ erDiagram
         string report_id FK, UK "1:1 REPORT"
         datetime created_at
     }
-    REFERRAL {
-        string id PK
-        string referrer_id FK "USER.id - owns the code"
-        string referee_id FK "USER.id - optional, null until used"
-        string referralCode UK "8-char alphanumeric"
-        int usageCount "fixed usage limit"
-        datetime expiryDate "created_at + 28 days"
-        datetime created_at
-    }
 
     %% External reference (owned by Auth Service)
     AUTH_CREDENTIAL {
@@ -289,8 +267,6 @@ erDiagram
     USER ||--o{ REPORT : "is reported"
     USER ||--o{ BLOCK : "blocks as blocker"
     REPORT ||--o| BLOCK : "block creates report"
-    USER ||--o{ REFERRAL : "refers (referrer)"
-    USER ||--o{ REFERRAL : "referred (referee, nullable)"
 ```
 # ratio-service
 
@@ -302,7 +278,7 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "f(onboarding_time, referral_count)"
+        int rank "f(onboarding_time)"
         datetime admitted_at
         datetime created_at
     }
