@@ -1,3 +1,4 @@
+```mermaid
 graph LR
     Client[[Mobile Client]]
     
@@ -20,7 +21,7 @@ graph LR
         end
         
         subgraph External
-            SMS[SMS Gateway]
+            Google[Google OAuth]
             Push[Push Notification Service]
         end
     end
@@ -47,4 +48,5 @@ graph LR
     MatchingService --> Cache
     
     NotificationService --> Push
-    AuthService --> SMS
+    AuthService --> Google
+```
