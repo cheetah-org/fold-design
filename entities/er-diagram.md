@@ -59,7 +59,7 @@ erDiagram
         enum gender "FEMALE | MALE"
         date dob "from Google"
         string city
-        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
+        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
     PROFILE {
@@ -213,7 +213,7 @@ erDiagram
         enum gender "FEMALE | MALE"
         date dob "from Google"
         string city
-        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
+        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
     PROFILE {

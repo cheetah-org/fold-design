@@ -192,7 +192,7 @@ No ads. Ever.
 | Profile access post-unmatch | Gone — same message whether unmatched or account deleted |
 | Reporting | Immediate shadow ban on report, unban if not upheld, permanent suspend if upheld, false reporters also suspended |
 | Platform | Mobile only, no web app |
-| Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Google OAuth + Firebase (FCM, Storage) + Railway |
+| Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Firebase (Auth, FCM, Storage — all-Firebase) + Railway |
 | Architecture | Modulith — single deployment, strict module boundaries |
 | Discovery algorithm | To be decided at build time |
 
@@ -207,7 +207,7 @@ No ads. Ever.
 - **Real-time chat:** Spring WebSocket
 - **Push notifications:** Firebase Cloud Messaging (free tier)
 - **File storage:** Firebase Storage (free tier, 5GB)
-- **Auth:** Google OAuth — sign-in, fetch name/DOB/email
+- **Auth:** Firebase Auth with Google OAuth — sign-in via Google account, fetch name/DOB/email
 - **Hosting:** Railway or Render (free/low-cost tier to start)
 
 ---

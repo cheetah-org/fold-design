@@ -27,17 +27,16 @@ The core-flow docs name *services*; the backend implements them as *modules* in 
 
 | Core-flow service | Backend module | Notes |
 |---|---|---|
-| Auth Service | `auth` | Infrastructure, not a peer domain: sits in front of every request, resolves principal (userId + roles). **Not an event participant; modules never call it back.** |
-| User Service | `users` | ONE source of truth for `User`. Holds account state + settings. |
+| Auth Service | `auth` | Infrastructure, not a peer domain: sits in front of every request, resolves principal (userId + roles) and verifies the Firebase ID token from Google sign-in. **Not an event participant; modules never call it back.** |
+| User Service | `users` | ONE source of truth for `User`. Hosts account state + settings **plus `PROFILE`/`PHOTO` (bio, photos, captions) and `REPORT`/`BLOCK` (moderation)** — the ER diagram overrules the earlier "separate `profile` module" idea, so profile is NOT its own module here. Owns onboarding: client completes a short form and calls `POST /users`. |
 | Chat Service | `messaging` | Conversations + messages. Name differs from the flow docs. |
 | Matching Service | `matching` | Swipes, likes, match records, match algorithm. |
 | Notification Service | `notifications` | Push delivery via external FCM; email/SMS later. |
-| Ratio Service | `ratio` **(new module)** | Gender-ratio gate + waiting queue from `reg-flow`. **Decision: dedicated `ratio` module** — sync admission calls from auth, async queue events outward. |
-| *(not in flows)* | `profile` | Bio/photos/prompts — needed by like/match feed and like-details reads; absent from flow diagrams, see §7.3. |
+| Ratio Service | `ratio` **(new module)** | Gender-ratio gate + waiting queue from `reg-flow`. **Decision: dedicated `ratio` module** — sync admission calls from `users` (during `POST /users`), async queue events outward. |
 | *(not in flows)* | `discovery` | Feeds the woman's deck; owns the event-fed candidate pool, see §7.2. |
 | *(not in flows)* | `commons` | Shared DTO contracts only — payloads for both sync returns and event records. |
 | Database | Single Postgres | One datasource; each module owns its own tables; cross-module references are plain IDs. |
-| Google OAuth / FCM | External | Out of module boundaries: Google OAuth (auth), FCM (push), Firebase Storage. |
+| Firebase | External | All-Firebase for external services: **Firebase Auth** (Google sign-in), **FCM** (push), **Firebase Storage** (photos). Out of module boundaries. |
 
 ---
 
@@ -58,53 +57,55 @@ Solid arrows (`->>`) = synchronous; dashed arrows (`-->>`) = asynchronous. Diagr
 
 ### 4.1 Registration — `reg-flow`
 
+Onboarding is **two steps**: Firebase Google sign-in (auth module) → short form + `POST /users` (users module). The users module owns account creation; auth only verifies the ID token and answers "is this a returning user?".
+
 ```mermaid
 sequenceDiagram
     participant User as User
     participant Client as Mobile Client
     participant Auth as Auth Service
+    participant UserSvc as User Service (users)
     participant Ratio as Ratio Service
-    participant UserSvc as User Service
+    participant Notif as Notification Service
     participant DB as Database
-    participant Google as Google OAuth
+    participant Firebase as Firebase (Google OAuth)
 
     User ->> Client: Sign in with Google
-    Client ->> Google: OAuth sign-in
-    Google -->> Client: Token + name, DOB, email
-    Client ->> Auth: Send Google ID token
-    Auth ->> DB: Check if user exists
-    Auth ->> DB: Store AUTH_CREDENTIAL (google_sub, email)
-    Auth ->> Ratio: Check gender ratio
-    alt If woman
-        Ratio -->> Auth: Ratio OK, proceed
-        Auth ->> DB: Create user
-        Auth -->> Client: Registration successful
-    else If man and ratio OK
-        Ratio -->> Auth: Ratio OK, proceed
-        Auth ->> DB: Create user
-        Auth -->> Client: Registration successful
-    else If man and ratio not OK
-        Ratio -->> Auth: Ratio not OK, queue
-        Auth ->> DB: Create queued user
-        Auth -->> Client: Added to queue
-        loop
-            Ratio ->> Ratio: Check ratio
-            Ratio ->> DB: Update queue
-            Ratio -->> Client: Queue update notification
+    Client ->> Firebase: OAuth sign-in
+    Firebase -->> Client: Firebase ID token (name, DOB, email)
+    Client ->> Auth: Verify Firebase ID token (POST /auth/google)
+    Auth ->> DB: Upsert AUTH_CREDENTIAL (google_sub, email)
+    Auth -->> Client: access token + onboarded flag
+    alt New user (no USER row yet)
+        Client ->> UserSvc: POST /users (gender, city, dob if Google lacks it)
+        UserSvc ->> DB: Age gate check (21+, server-side)
+        UserSvc ->> Ratio: Check gender ratio (SYNC via RatioClient)
+        alt Woman OR man with ratio OK
+            Ratio -->> UserSvc: Admit
+            UserSvc ->> DB: Create USER + empty PROFILE (status ACTIVE)
+        else Man with ratio not OK
+            Ratio -->> UserSvc: Queue
+            UserSvc ->> DB: Create USER (status QUEUED), enqueue
+            loop Every ratio check cycle
+                Ratio -->> UserSvc: AdmittedFromQueue (ASYNC event)
+                UserSvc ->> DB: Update USER status -> ACTIVE
+                Ratio -->> Notif: QueueStatusChanged (ASYNC event)
+                Notif -->> Client: Queue update push (FCM)
+            end
         end
-        Ratio -->> Auth: Ratio OK, admit from queue
-        Auth ->> DB: Update user status
-        Auth -->> Client: Registration successful
+        UserSvc -->> Client: 201 created (user + queue position)
+    else Returning user
+        Auth -->> Client: existing session
     end
 ```
 
 | # | From → To | Interaction | Channel | Modulith implementation | After extraction |
 |---|---|---|---|---|---|
-| R1 | Auth → Ratio | Check gender ratio | **SYNC** | In-process client-interface call (`RatioClient.checkGenderRatio()`) into the `ratio` module | HTTP client-interface |
-| R2 | Ratio → Auth | Admit from queue | **ASYNC** | Domain event `AdmittedFromQueue` → auth/user listener flips account active | Broker + outbox → listener |
-| R3 | Ratio → Client | Queue update notification | **ASYNC** | Domain event `QueueStatusChanged` → `notifications` → FCM push | Broker → `notifications` → FCM |
-| — | Client → Google | OAuth sign-in | EXTERNAL | Google OAuth | n/a (external) |
-| — | Auth → DB | User create / status update | DB | In the real codebase this is the `users` module writing its own row — see §7.1 | — |
+| R1 | UserSvc → Ratio | Check gender ratio during `POST /users` | **SYNC** | In-process client-interface call (`RatioClient.evaluateGenderRatio(city, gender)`) into the `ratio` module | HTTP client-interface |
+| R2 | Ratio → UserSvc | Admit from queue | **ASYNC** | Domain event `AdmittedFromQueue` → users listener flips account to `ACTIVE` | Broker + outbox → listener |
+| R3 | Ratio → Client | Queue update notification | **ASYNC** | Domain event `QueueStatusChanged` → `notifications` → FCM | Broker → `notifications` → FCM |
+| — | Client → Firebase | OAuth sign-in | EXTERNAL | Firebase Auth (Google) | n/a (external) |
+| — | UserSvc → DB | User create / status update | DB | `users` module writes its own row (own tables, rule 7); auth never writes `USER` | — |
 
 ### 4.2 Like & Match — `like-match-flow`
 
@@ -145,7 +146,7 @@ sequenceDiagram
 
 | # | From → To | Interaction | Channel | Modulith implementation | After extraction |
 |---|---|---|---|---|---|
-| L1 | users/profile → matching (implied) | Keep the eligible-profiles pool fresh | **ASYNC** | Event-fed local projection: `UserRegistered`, `UserDeactivated`, `UserProfileUpdated`, `ProfileUpdated` listeners update the pool | Broker → projection |
+| L1 | users → matching (implied) | Keep the eligible-profiles pool fresh | **ASYNC** | Event-fed local projection: `UserRegistered`, `UserDeactivated`, `ProfileUpdated`, `PhotoChanged` listeners update the pool | Broker → projection |
 | L2 | Matching → Notif | New-like push to the man | **ASYNC** | Domain event `LikeReceived` → `notifications` → FCM | Broker → `notifications` → FCM |
 | L3 | Matching → users/profile (implied) | View like + woman's profile (`Get like and woman's profile`) | **SYNC** | Client-interface `UserClient`/`ProfileClient` reads (or maintained projection); never a DB join | HTTP client-interface |
 | L4 | Matching → Notif | Match notifications to both | **ASYNC** | Domain event `MatchCreated` → `notifications` → FCM | Broker → `notifications` → FCM |
@@ -229,7 +230,7 @@ Every inter-service interaction from the four flows, consolidated.
 
 | Interaction | From → To | Flow | Channel | Why | Modulith impl | After extraction |
 |---|---|---|---|---|---|---|
-| Check gender ratio | Auth → Ratio | reg | **SYNC** | Auth cannot proceed without the admission verdict | Client-interface in-process call into the `ratio` module | HTTP client-interface |
+| Check gender ratio | users → Ratio | reg | **SYNC** | users cannot proceed with onboarding without the admission verdict | Client-interface in-process call into the `ratio` module | HTTP client-interface |
 | Admit from queue | Ratio → Auth | reg | **ASYNC** | Background admission, no blocking answer | `AdmittedFromQueue` event → listener flips user active | Broker + outbox |
 | Queue update notification | Ratio → Client | reg | **ASYNC** | Announcement, others react | `QueueStatusChanged` event → `notifications` → FCM | Broker → FCM |
 | Feed the eligible pool | users/profile → matching | like & match | **ASYNC** | High-frequency, staleness-tolerant | Event-fed projection | Broker → projection |
@@ -264,9 +265,9 @@ Every inter-service interaction from the four flows, consolidated.
 
 The flows above are faithful to the core-flow diagrams. Where the real backend differs, it's called out here — nothing was silently rewritten.
 
-1. **Auth creates the user (reg-flow) vs `users` owns `User`.** In the modulith, the Google ID token is verified and the account is created by the `users` module (auth only resolves the principal). The flow's `Auth ->> DB: Create user` maps to a write inside `users`. After a successful registration, `users` publishes `UserRegistered`, and profile/matching/messaging/notifications seeds their local projections from it — a fan-out the flow diagram doesn't show.
+1. **Auth creates the user (reg-flow) vs `users` owns `User`.** Onboarding is two steps: (a) the `auth` module verifies the Firebase ID token and upserts `AUTH_CREDENTIAL` against `google_sub`, returning an access token + an `onboarded` flag; (b) the client fills the short form with whatever Google did not provide (`gender`, `city`, and `dob` when the Google account lacks it) and calls `POST /users` **inside the `users` module** — the one place `USER` is written. `users` enforces the 21+ gate server-side, then runs the ratio admission via `RatioClient` (R1). The flow's old `Auth ->> DB: Create user` maps to that write. After a successful registration, `users` publishes `UserRegistered`, and discovery/matching/messaging/notifications seed their local projections from it — a fan-out the flow diagram doesn't show.
 
-2. **`Matching` serves the feed (like-match-flow) vs `discovery` owns the deck.** The woman's feed and the eligible-men pool belong to `discovery`; `matching` handles swipes/likes/match records. The pool is an event-fed projection (L1), not a per-request query. Deck cards are composed at the edge from `users` + `profile` data via client-interface reads.
+2. **`Matching` serves the feed (like-match-flow) vs `discovery` owns the deck.** The woman's feed and the eligible-men pool belong to `discovery`; `matching` handles swipes/likes/match records. The pool is an event-fed projection (L1), not a per-request query. Deck cards are composed at the edge from `users` data (account + profile + photos, one module) via client-interface reads.
 
 3. **`Get like and woman's profile` is drawn as a DB read.** In the backend that detail view is built by reading `users`/`profile` through their public APIs (client-interface sync call or a maintained projection) — never a cross-module DB join.
 
