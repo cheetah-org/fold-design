@@ -98,7 +98,7 @@ erDiagram
         string id PK
         string liker_id FK "woman"
         string liked_id FK "man"
-        enum status "PENDING | ACCEPTED | PASSED"
+        enum status "PENDING | ACCEPTED | PASSED | EXPIRED"
         datetime expires_at
         datetime created_at
     }
@@ -333,7 +333,7 @@ erDiagram
         string id PK
         string liker_id FK "woman"
         string liked_id FK "man"
-        enum status "PENDING | ACCEPTED | PASSED"
+        enum status "PENDING | ACCEPTED | PASSED | EXPIRED"
         datetime expires_at
         datetime created_at
     }

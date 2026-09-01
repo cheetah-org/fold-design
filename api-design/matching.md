@@ -2,7 +2,7 @@
 
 Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
-**Module:** `matching` in the Spring Boot modulith. Owns `LIKE` and `MATCH` (ER) — likes, accept/pass, matches, unmatch. **The woman's discovery feed/deck is NOT here** — the `discovery` module owns it (inter-service-communication.md §7.2); its endpoints get their own doc. Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
+**Module:** `matching` in the Spring Boot modulith. Owns `LIKE` and `MATCH` (ER) — likes, accept/pass, matches, unmatch. **The woman's discovery feed/deck is NOT here** — the `discovery` module owns it (inter-service-communication.md §7 (2)); its endpoints get their own doc. Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
 
 **Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Every endpoint requires a valid Bearer token.**
 
@@ -17,7 +17,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 | Rule | Value |
 |---|---|
 | Direction | **Women like men** (hetero pairing per product + ER). Men's only actions: accept / pass / unmatch. A male caller on like-creation → `403 FORBIDDEN`, no role bypass. |
-| Age gate | Target must be **strictly younger** than the liker — enforced server-side at like creation **and** re-checked at accept (`422 AGE_RULE`). |
+| Age gate | Target must be **strictly younger** than the liker — enforced server-side at like creation **and** re-checked at accept (`422 AGE_RULE`). A failed re-check leaves the like `PENDING` (review fix) — only `pass` clears it before the 48h TTL. |
 | Like TTL | `expires_at = created_at + 48h`. Hourly sweep flips `PENDING → EXPIRED`. Silent: removed from his inbox, she is never told, nothing is notified. |
 | Re-like cooldown | After a pair ends in `PASSED`, `EXPIRED`, or `UNMATCHED`, no new like either direction for **30 days** (configurable) → `409 RELIKE_COOLDOWN`. |
 | Like volume | **Unlimited** for women (free tier) — no cap, no counters exposed. |
@@ -133,14 +133,14 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
 ### `POST /users/{targetUserId}/likes`
 The woman likes the man. Creates `LIKE(PENDING, expires_at=+48h)`; publishes `LikeReceived` → push. No body.
 
-**Guards (in order):** caller female (else `403 FORBIDDEN` — business rule, no role bypass) → target exists & visible (else `404 NOT_FOUND`) → not self (`422 CANNOT_LIKE_SELF`) → target strictly younger (`422 AGE_RULE`) → no duplicate `PENDING` (`409 LIKE_EXISTS`) → pair not in cooldown (`409 RELIKE_COOLDOWN`).
+**Guards (in order):** caller female (else `403 FORBIDDEN` — business rule, no role bypass) → target exists & visible (else `404 USER_NOT_VISIBLE`, same code/shape as `user.md` — review fix) → not self (`422 CANNOT_LIKE_SELF`) → target strictly younger (`422 AGE_RULE`) → no duplicate `PENDING` (`409 LIKE_EXISTS`) → pair not in cooldown (`409 RELIKE_COOLDOWN`).
 
 **Response 201 — `LikeDto`**
 
 | Status | Code |
 |---|---|
 | 403 | `ONBOARDING_INCOMPLETE` (onb=false) · `FORBIDDEN` — male caller |
-| 404 | `NOT_FOUND` — target missing/hidden/`DEACTIVATED` |
+| 404 | `USER_NOT_VISIBLE` — target missing/hidden/`DEACTIVATED` (canonical masking code per `user.md`) |
 | 409 | `LIKE_EXISTS` — duplicate `PENDING` · `RELIKE_COOLDOWN` |
 | 422 | `CANNOT_LIKE_SELF` · `AGE_RULE` · `VALIDATION_ERROR` — unexpected body |
 
@@ -164,6 +164,7 @@ The man accepts a `PENDING` like → like `ACCEPTED`, `MATCH(ACTIVE)` created, `
 | 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not the receiver |
 | 404 | `NOT_FOUND` — like not on this user |
 | 409 | `LIKE_NOT_PENDING` — already accepted/passed/expired · `PAIR_INELIGIBLE` — blocked either direction, or either party not `ACTIVE` at accept time |
+| 422 | `AGE_RULE` — re-check failed; the like stays `PENDING` (only `pass` clears it before TTL) |
 
 ### `POST /users/{userId}/likes/{likeId}/pass`
 The man passes — like `PASSED`, **she is never notified**, pair enters cooldown. No body. → 200 `LikeDto` (status `PASSED`).
