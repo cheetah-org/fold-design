@@ -55,7 +55,7 @@ erDiagram
     %% ============ CENTER: USER SERVICE ============
     USER {
         string id PK
-        string credential_id "plain-ID ref to AUTH_CREDENTIAL.id"
+        string credential_id UK "ref to AUTH_CREDENTIAL.id; unique among live (non-DEACTIVATED) rows"
         string name "from Google profile (client-supplied at POST /users)"
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
@@ -163,7 +163,7 @@ erDiagram
     %% ============ RELATIONSHIPS (interleaved so dagre spreads N/S/E/W) ============
 
     %% North: Auth -> User
-    AUTH_CREDENTIAL ||--o| USER : "creates"
+    AUTH_CREDENTIAL ||--o{ USER : "creates (review fix: retained DEACTIVATED rows + fresh live row — at most one live non-DEACTIVATED row per credential)"
 
     %% Northwest: Ratio -> User
     USER ||--o{ ADMISSION_QUEUE : "queued"
@@ -210,7 +210,7 @@ erDiagram
     %% Owned entities
     USER {
         string id PK
-        string credential_id "plain-ID ref to AUTH_CREDENTIAL.id"
+        string credential_id UK "ref to AUTH_CREDENTIAL.id; unique among live (non-DEACTIVATED) rows"
         string name "from Google profile (client-supplied at POST /users)"
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
@@ -254,7 +254,7 @@ erDiagram
     }
 
     %% Relationships
-    AUTH_CREDENTIAL ||--o| USER : "creates (external)"
+    AUTH_CREDENTIAL ||--o{ USER : "creates (external, at most one live non-DEACTIVATED row)"
     USER ||--|| PROFILE : "has"
     PROFILE ||--o{ PHOTO : "owns (max 6)"
     USER ||--o{ REPORT : "files as reporter"

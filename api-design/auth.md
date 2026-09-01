@@ -546,12 +546,12 @@ sequenceDiagram
     G-->>C: Google ID token
     C->>A: POST /auth/google {id_token, device}
     A->>J: Verify signature / iss / aud / exp
-    J-->>A: OK {sub, email, name, dob?}
+    J-->>A: OK {sub, email, name}
     A->>DB: Upsert AUTH_CREDENTIAL (google_sub)
     DB-->>A: credential created — no USER yet
     A->>DB: Create REFRESH_SESSION + REFRESH_TOKEN (hash)
     A-->>C: 200 {access_token, refresh_token, onboarded:false, user:null}
-    C->>U: POST /users {gender, city} (short form, users module)
+    C->>U: POST /users {name, gender, city, dob} (short form, users module)
     U-->>C: 201 user created
     C->>A: POST /auth/refresh (rotate -> access token now carries oid)
     A-->>C: 200 {access_token+oid, new refresh_token}

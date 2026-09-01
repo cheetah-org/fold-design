@@ -31,5 +31,6 @@ Public endpoints (login paths, `/.well-known/*`) are scoped per IP only. Authent
 Each service doc's rate-limit table lists only endpoint-specific numbers; the header/envelope/scope semantics live here.
 
 - `auth.md` §9.1
-- `users` (`user.md`) — Limits line §"Conventions"
+- `users` (`user.md`) — §Rate limits table (review fix: pointer previously cited a nonexistent §"Conventions")
+- `matching` (`matching.md`) — §Rate limits table
 - `notifications.md` §"Rate limits"

@@ -26,7 +26,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 | `POST /users/{userId}/suspend` · `/reactivate` | ❌ | ✅ | ✅ |
 | `GET /users` (search + review queue) | ❌ 403 | ✅ | ✅ |
 
-**Visibility:** non-privileged `GET /users/{userId}` of a blocked (either direction), `SUSPENDED`, `SHADOW_BANNED`, `DEACTIVATED`, `SOFT_PAUSED`, or `QUEUED` user → `404 USER_NOT_VISIBLE`. The same single response is returned for "no row" (un-onboarded credential), unknown id, and hidden users — callers can't distinguish.
+**Visibility:** non-owner, non-privileged `GET /users/{userId}` of a blocked (either direction), `SUSPENDED`, `SHADOW_BANNED`, `DEACTIVATED`, `SOFT_PAUSED`, or `QUEUED` user → `404 USER_NOT_VISIBLE` (self never masked — see §GET /users/{userId}). The same single response is returned for "no row" (un-onboarded credential), unknown id, and hidden users — callers can't distinguish.
 
 **DTO rules:** this service **never exposes `email`** — it is owned by the Auth Service (`AUTH_CREDENTIAL`, surfaced via `GET /auth/me`). Full `UserDto` exposes `dob` only to self/DEV/ADMIN; public views expose only computed `age`. `priority`, `notes`, `reviewed_by` are moderation-internal.
 
@@ -62,8 +62,8 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 - **Gate:** `admission_open = active_women >= active_men`.
   - Woman registering → `ACTIVE`.
   - Man registering + gate open → `ACTIVE`.
-  - Man registering + gate closed → `QUEUED`, FIFO by onboarding time; position = number of earlier queued men + 1.
-- **Rank / wait estimate:** `rank` = position in the queue. `estimated_wait_ms` = `distinct_active_women_churn_rate`-based heuristic: `pending_ahead × rolling_avg_admission_interval`, floor 5 min, computed by the `ratio` module and stored with the queue snapshot. Exact algorithm is a build-time decision.
+  - Man registering + gate closed → `QUEUED`, FIFO by onboarding time; `rank` = number of earlier queued men + 1.
+- **Rank / wait estimate:** `estimated_wait_ms` = `distinct_active_women_churn_rate`-based heuristic: `pending_ahead × rolling_avg_admission_interval`, floor 5 min, computed by the `ratio` module and stored with the queue snapshot. Exact algorithm is a build-time decision.
 - **Promotion:** the `ratio` module evaluates on every deactivation event and on a 5-min cadence. While the gate is open it admits from the front (FIFO), emitting `AdmittedFromQueue` → users module flips `status=ACTIVE`, `notifications` pushes `QueueStatusChanged`.
 - **`SOFT_PAUSED`:** if the gate tips closed after admissions (women left), the *most recently admitted* men are soft-paused first (reverse admission order) until counts rebalance; they are hidden from discovery and resume to `ACTIVE` when the gate reopens.
 - **Profile editing is allowed while `QUEUED`/`SOFT_PAUSED`** (men complete profiles while waiting); it is blocked only for `DEACTIVATED` (`404`).
@@ -424,9 +424,9 @@ Self / DEV / ADMIN. Blocks **made by** this user. `?page=&size=` → 200 `PagedD
 **Shadow-ban policy (anti-abuse, explicit rules):** a filed report records a `PENDING` report and may shadow-ban the target:
 
 - `UNDERAGE` → **immediate** shadow-ban + `priority=HIGH`.
-- All other categories → shadow-ban only once **≥ 2 distinct reporters** have `PENDING` reports against the same target within a rolling 48 h. Below that, the report stays `PENDING` with no status change.
+- All other categories → shadow-ban only once **≥ 2 distinct reporters** have `PENDING` reports against the same target within a 48 h lookback (counted from `REPORT.created_at` rows, not the request limiter; review nit). Below that, the report stays `PENDING` with no status change.
 - A target already `SHADOW_BANNED` (or `SUSPENDED`/`DEACTIVATED`) is **not** re-banned by further reports.
-- **Per-reporter rate cap:** max 5 report submissions per reporter per rolling 24 h → `429 REPORT_LIMIT_REACHED`.
+- **Per-reporter rate cap:** max 5 report submissions per reporter per 24 h lookback (counted from `REPORT.created_at` rows, not the request limiter; review nit) → `429 REPORT_LIMIT_REACHED`.
 
 ### `POST /users/{reportedUserId}/reports`
 File a report. Applies the shadow-ban policy above. `UNDERAGE` → `priority=HIGH`. → 201 `FiledReportDto`. **Visibility carve-out (review fix):** reporting is allowed regardless of block/visibility state — block-then-report must work, so `USER_NOT_VISIBLE` never gates this endpoint (404 only for a missing or `DEACTIVATED` target).

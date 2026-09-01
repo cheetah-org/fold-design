@@ -1,0 +1,236 @@
+# Matching Service — API
+
+Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
+
+**Module:** `matching` in the Spring Boot modulith. Owns `LIKE` and `MATCH` (ER) — likes, accept/pass, matches, unmatch. **The woman's discovery feed/deck is NOT here** — the `discovery` module owns it (inter-service-communication.md §7.2); its endpoints get their own doc. Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
+
+**Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Every endpoint requires a valid Bearer token.**
+
+**Un-onboarded gate:** `onb=false` → `403 ONBOARDING_INCOMPLETE` (canonical, `auth.md` §2). **Owner check:** `oid` vs path segment; non-owner/non-privileged → `403 FORBIDDEN`; `DEV`/`ADMIN` bypass owner checks only — **business rules (gender, age, cooldown) apply to every role**.
+
+**Resources** addressed by `userId` — no `/users/me`. Visibility/masking semantics (404 indistinguishable) follow `user.md`.
+
+---
+
+## Like & match rules (contract)
+
+| Rule | Value |
+|---|---|
+| Direction | **Women like men** (hetero pairing per product + ER). Men's only actions: accept / pass / unmatch. A male caller on like-creation → `403 FORBIDDEN`, no role bypass. |
+| Age gate | Target must be **strictly younger** than the liker — enforced server-side at like creation **and** re-checked at accept (`422 AGE_RULE`). |
+| Like TTL | `expires_at = created_at + 48h`. Hourly sweep flips `PENDING → EXPIRED`. Silent: removed from his inbox, she is never told, nothing is notified. |
+| Re-like cooldown | After a pair ends in `PASSED`, `EXPIRED`, or `UNMATCHED`, no new like either direction for **30 days** (configurable) → `409 RELIKE_COOLDOWN`. |
+| Like volume | **Unlimited** for women (free tier) — no cap, no counters exposed. |
+| Seen/unread | **None** on likes (per decision). The man learns of a like via the `LIKE` push (notifications module); the inbox is a plain paged list. |
+| Match | One `ACTIVE` match per pair. Accept creates it; `MatchCreated` → `messaging` opens the conversation (its id backfills onto the match **asynchronously** — `conversation_id` may be `null` briefly). |
+| Unmatch | Either party, any time. `MatchDeleted` → `messaging` purges the thread; the pair enters the 30-day cooldown. |
+| Soft-paused men | His inbox stays visible, but accept → `409 PAIR_INELIGIBLE` while he (or she) is not `ACTIVE`. |
+
+**Status enums:** `LIKE`: `PENDING | ACCEPTED | PASSED | EXPIRED` *(ER gains `EXPIRED` — alignment note)* · `MATCH`: `ACTIVE | UNMATCHED`.
+
+---
+
+## Authorization matrix
+
+| Capability | `USER` | `DEV`/`ADMIN` |
+|---|---|---|
+| `POST /users/{targetId}/likes` (female caller) | ✅ | ✅ |
+| Male caller on like-creation (any role) | ❌ 403 | ❌ 403 |
+| Own inbox / accept / pass / matches / unmatch | ✅ owner | ✅ |
+| Same on another user's path | ❌ 403 | ✅ |
+
+---
+
+## Error
+
+Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY_REQUESTS` per `shared/rate-limits.md`. None repeated per endpoint.
+
+```json
+{
+  "error": {
+    "code": "RELIKE_COOLDOWN",
+    "message": "Pair on cooldown. Try again after 12 days.",
+    "traceId": "8f2c1a3d-4b5e-4c6f-9a0d-1e2f3a4b5c6d"
+  }
+}
+```
+
+---
+
+## DTOs
+
+`LikeDto` — a like as seen by its creator (the woman)
+
+```json
+{
+  "id": "d7c4e6a8-1b2c-4d3e-9f0a-5b6c7d8e9f01",
+  "liked_id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
+  "status": "PENDING",
+  "created_at": "2026-09-01T10:00:00Z",
+  "expires_at": "2026-09-03T10:00:00Z"
+}
+```
+
+`LikeInboxItemDto` — the man's inbox row (embeds the woman's masked `PublicUserDto`, `user.md` §DTOs)
+
+```json
+{
+  "like_id": "d7c4e6a8-1b2c-4d3e-9f0a-5b6c7d8e9f01",
+  "from": {
+    "id": "3f8c2a11-5b6d-4c7e-9f0a-b1c2d3e4f5a6",
+    "name": "Priya",
+    "age": 31,
+    "gender": "FEMALE",
+    "city": "Bangalore",
+    "bio": "Coffee, music, long walks",
+    "description": "Looking to meet someone younger.",
+    "preferences": ["coffee", "live music"],
+    "photos": []
+  },
+  "created_at": "2026-09-01T10:00:00Z",
+  "expires_at": "2026-09-03T10:00:00Z"
+}
+```
+
+`MatchDto` — one match as seen by a member
+
+```json
+{
+  "id": "e8d5f7b9-2c3d-4e4f-8a1b-6c7d8e9f0a12",
+  "counterpart": {
+    "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
+    "name": "Rohan",
+    "age": 28,
+    "gender": "MALE",
+    "city": "Bangalore",
+    "bio": "I make coffee",
+    "description": "Looking to meet someone older.",
+    "preferences": ["coffee"],
+    "photos": []
+  },
+  "status": "ACTIVE",
+  "conversation_id": null,
+  "created_at": "2026-09-01T10:05:00Z"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `counterpart` | object | masked `PublicUserDto` resolved via `UserClient` — never the raw other-side account |
+| `status` | enum | `ACTIVE` \| `UNMATCHED` |
+| `conversation_id` | string\|null | set once `messaging` creates the thread (`MatchCreated` handler); `null` until then |
+
+`PagedDto<T>`
+
+```json
+{ "items": [], "page": 0, "size": 20, "total": 0 }
+```
+
+---
+
+## Likes
+
+### `POST /users/{targetUserId}/likes`
+The woman likes the man. Creates `LIKE(PENDING, expires_at=+48h)`; publishes `LikeReceived` → push. No body.
+
+**Guards (in order):** caller female (else `403 FORBIDDEN` — business rule, no role bypass) → target exists & visible (else `404 NOT_FOUND`) → not self (`422 CANNOT_LIKE_SELF`) → target strictly younger (`422 AGE_RULE`) → no duplicate `PENDING` (`409 LIKE_EXISTS`) → pair not in cooldown (`409 RELIKE_COOLDOWN`).
+
+**Response 201 — `LikeDto`**
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` (onb=false) · `FORBIDDEN` — male caller |
+| 404 | `NOT_FOUND` — target missing/hidden/`DEACTIVATED` |
+| 409 | `LIKE_EXISTS` — duplicate `PENDING` · `RELIKE_COOLDOWN` |
+| 422 | `CANNOT_LIKE_SELF` · `AGE_RULE` · `VALIDATION_ERROR` — unexpected body |
+
+> A woman's *sent*-likes list is intentionally absent (product: no delivery feedback on free tier; insights are deferred premium).
+
+### `GET /users/{userId}/likes`
+Likes **received by** this user — the man's inbox. Always empty for women (by product rule). Newest first. `?page=&size=` → 200 `PagedDto<LikeInboxItemDto>`.
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not owner |
+| 404 | `NOT_FOUND` — user missing |
+
+### `POST /users/{userId}/likes/{likeId}/accept`
+The man accepts a `PENDING` like → like `ACCEPTED`, `MATCH(ACTIVE)` created, `MatchCreated` published. No body. → 200 `MatchDto`.
+
+**Concurrency:** conditional update `SET status='ACCEPTED' WHERE id=:id AND status='PENDING'` — a racing duplicate accept loses and gets `409 LIKE_NOT_PENDING`.
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not the receiver |
+| 404 | `NOT_FOUND` — like not on this user |
+| 409 | `LIKE_NOT_PENDING` — already accepted/passed/expired · `PAIR_INELIGIBLE` — blocked either direction, or either party not `ACTIVE` at accept time |
+
+### `POST /users/{userId}/likes/{likeId}/pass`
+The man passes — like `PASSED`, **she is never notified**, pair enters cooldown. No body. → 200 `LikeDto` (status `PASSED`).
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not the receiver |
+| 404 | `NOT_FOUND` |
+| 409 | `LIKE_NOT_PENDING` · `PAIR_INELIGIBLE` |
+
+---
+
+## Matches
+
+### `GET /users/{userId}/matches`
+This user's matches. `?status=ACTIVE|UNMATCHED&page=&size=` (default `ACTIVE`). Newest first. → 200 `PagedDto<MatchDto>`.
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not owner |
+| 404 | `NOT_FOUND` — user missing |
+
+### `DELETE /users/{userId}/matches/{matchId}`
+Unmatch — either party (must be a member). Sets `UNMATCHED` + `unmatched_by`/`unmatched_at`; publishes `MatchDeleted` → `messaging` purges the thread (async, at-least-once); pair enters cooldown. → `204`, idempotent (re-unmatch → `204`).
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not owner |
+| 404 | `NOT_FOUND` — match not on this user |
+
+---
+
+## Rate limits
+
+Mechanism, headers, envelope: `shared/rate-limits.md`. Per-endpoint values:
+
+| Endpoint | Limit | Scope | Window |
+|---|---|---|---|
+| `POST .../likes` | 60 | per user | 1 min |
+| `GET .../likes` · `GET .../matches` | 120 | per user | 1 min |
+| accept · pass | 60 | per user | 1 min |
+| `DELETE .../matches/{id}` | 30 | per user | 1 min |
+
+---
+
+## Non-functional notes
+
+### Idempotency & concurrency
+- `POST .../likes` — **not** idempotent by design: duplicate intent surfaces as `409 LIKE_EXISTS` (truthful, and the client can treat it as success).
+- accept/pass — single-winner via conditional status update; losers get `409 LIKE_NOT_PENDING`.
+- unmatch — idempotent `204` (anti-enumeration, same semantics as `auth.md` logout / `user.md` unblock).
+
+### Expiry sweep
+Hourly job flips `PENDING → EXPIRED` where `expires_at < now`; `expires_at` on the row is authoritative, so the client can hide expired inbox items before the sweep runs. Expiry is silent on all sides.
+
+### Published events (contract)
+
+Spring Modulith transactional event publication — at-least-once, retried listeners (mechanism per `auth.md` §9.5). Payloads snake_case JSON.
+
+| Event | Payload | Consumers |
+|---|---|---|
+| `LikeReceived` | `{ like_id, liker_id, liked_id }` | `notifications` (push), `analytics` |
+| `MatchCreated` | `{ match_id, woman_id, man_id }` | `messaging` (open conversation), `notifications` |
+| `MatchDeleted` | `{ match_id, unmatched_by }` | `messaging` (purge thread), `notifications` |
+
+### Cross-module notes
+- **Profile reads:** inbox/match cards embed `PublicUserDto` via the `users` module's `UserClient` (sync, in-process — inter-service-communication.md L3). Masking/mirrored-404 semantics owned there.
+- **Eligibility data:** gender/dob for the business rules come from the same client-interface read; never from client input.
+- **ER alignment:** `LIKE.status` gains `EXPIRED`; `FEED_CURSOR` belongs to the `discovery` doc, not here.
+- **Deferred (premium):** spotlight boost, advanced feed filters, like-delivery insights — future contract additions; the like/match model above doesn't preclude them.

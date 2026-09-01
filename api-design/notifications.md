@@ -132,7 +132,7 @@ Canonical envelope (shared, `auth.md` §2); `field_errors` only on `VALIDATION_E
 A `Device` row is **tied to the auth session** that registered it — it stores `session_id` (from the token's `sid` claim) and `device_fingerprint` (from the token's `dfp` claim). Lifecycle:
 
 - **Logout stops push:** auth emits `SessionRevoked { session_id, credential_id }` (§9.5) on logout/logout-all; this module deletes `Device` rows whose `session_id` matches. Delivery is at-least-once via Spring Modulith transactional events — a failed listener is retried, never dropped.
-- **Re-login on the same device:** `POST /tokens` with a token whose `dfp` matches an existing row for the same `(userId, fingerprint)` replaces that row's `fcm_token` and also removes any *other* sessions' rows on the same fingerprint (one active token per install).
+- **Re-login on the same device:** `POST /tokens` with a token whose `dfp` matches an existing row for the same `(userId, fingerprint)` replaces that row's `fcm_token` and also removes any *other* sessions' rows on the same fingerprint (one active token per install — **advisory** (review fix): the fingerprint is client-asserted, so this is best-effort dedup, not a security guarantee).
 
 `Device` row: `id, user_id, session_id, platform, fcm_token, device_fingerprint, created_at, last_seen_at`.
 
