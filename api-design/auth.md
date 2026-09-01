@@ -20,7 +20,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 2. [Error envelope](#2-error-envelope)
 3. [POST /auth/google](#3-post-authgoogle)
 4. [POST /auth/refresh](#4-post-authrefresh)
-5. [POST /auth/logout](#5-post-authlogout)
+5. [POST /auth/logout · /auth/logout-all](#5-post-authlogout--authlogout-all)
 6. [GET /.well-known/jwks.json](#6-get-well-knownjwksjson)
 7. [GET /auth/me](#7-get-authme)
 8. [Supporting: sessions](#8-supporting-session-management)
@@ -40,22 +40,26 @@ Signed **RS256** (RSA-2048), **statelessly verifiable** via Auth Lib with `GET /
 { "alg": "RS256", "typ": "JWT", "kid": "k-2026b" }
 ```
 
-**Claims**
+**Single authoritative claims table** — every module (`users`, `notifications`, `matching`, …) reads exactly these claims and no others; no module-local claims.
 
-| Claim | Type | Always | Notes |
+| Claim | Type | Always | What it identifies / notes |
 |---|---|---|---|
 | `iss` | string | ✅ | `https://auth.fold.app/v1` |
 | `aud` | string | ✅ | `fold-mobile` |
-| `sub` | string | ✅ | `AUTH_CREDENTIAL.id` — stable per Google identity, present before/after onboarding |
-| `oid` | string | ⚠️ | `USER.id` — present only once onboarded (`onboarded=true`) |
-| `onb` | boolean | ✅ | `true` once a `USER` row exists for this identity |
+| `sub` | string | ✅ | **permanent identity** — `AUTH_CREDENTIAL.id`, minted at first google login, never changes. Present before and after onboarding. |
+| `oid` | string | ⚠️ | **`USER.id` (User Service userId)** — present only once onboarded (`onb=true`). |
+| `sid` | string | ✅ | refresh session id for the session that minted this token (§1.2). Lets modules bind side-effects to a session without calling auth back. |
+| `dfp` | string | ✅ | `device.fingerprint` of the minting session — lets modules cross-check device-bound requests (e.g. notification token registration). |
+| `onb` | boolean | ✅ | `true` once a `USER` row exists for this identity. |
 | `email` | string | ✅ | from Google, already verified by Google |
 | `roles` | string[] | ✅ | default `["USER"]`; `DEV`/`ADMIN` granted by allowlist. **Staleness:** roles are a snapshot — a role change is picked up on the next `/auth/refresh` or re-login; already-issued tokens keep the old roles until `exp`, as access tokens aren't revocable (`user.md` reads `roles` from this token, so it inherits the same ≤ 15 min lag) |
 | `iat` | integer | ✅ | epoch seconds |
 | `exp` | integer | ✅ | epoch seconds |
 | `jti` | string | ✅ | unique per token; audit/denylist (future) |
 
-> `sub` deliberately targets the credential, not the user row: it stays stable across the whole lifecycle (fresh sign-in → onboarding → returning logins) so tokens don't need re-issue when `oid` appears.
+**`sub` vs `oid` — genuinely different IDs, never the same value.** `sub` is the credential (Google identity) id owned by auth; `oid` is the profile (USER) id owned by the users module. They are linked by `USER.credential_id` (plain-ID reference, `user.md`). `sub` exists from the first login; `oid` appears only after onboarding.
+
+**`onb` lifecycle & claim staleness:** `onb` starts `false` and flips to `true` when the users module creates the `USER` row (`POST /users`). Claims are a **snapshot at mint time** — a token minted before onboarding keeps `onb=false` and no `oid` until the client refreshes (`POST /auth/refresh`, which re-resolves current state) or re-logs in. The same staleness applies to `roles` and applies in the direction `true→false` too (a restored/disabled account is only reflected after a refresh). A request authenticated with `onb=false` is legal **only** on `POST /users` (and auth's own refresh/logout); every other resource endpoint rejects it with `403 ONBOARDING_INCOMPLETE` (§2).
 
 **Lifetime:** 15 minutes (configurable 5–30). Clock-skew tolerance: 30 s. **Used in:** `Authorization: Bearer <access_token>` on every request to every module; verified by Auth Lib (signature, `kid`, `iss`, `aud`, `exp`).
 
@@ -72,11 +76,14 @@ Signed **RS256** (RSA-2048), **statelessly verifiable** via Auth Lib with `GET /
 **Server-side shape (design reference)**
 
 ```
-REFRESH_SESSION   id, credential_id, device{name,os,fingerprint}, created_at, last_used_at, expires_at, revoked_at
+REFRESH_SESSION   id, credential_id, user_id (null until onboarded), device{name, os, fingerprint},
+                  created_at, last_used_at, expires_at, revoked_at
 REFRESH_TOKEN     id, session_id, token_hash(SHA-256), issued_at, consumed_at, expires_at
 ```
 
-One `REFRESH_SESSION` per credential per device; a session owns a chain of rotated `REFRESH_TOKEN` rows. Reuse detection works because a rotated token's row keeps `consumed_at` — presenting it again means someone replayed a token the holder already spent.
+**Sessions are a first-class concept — one `REFRESH_SESSION` per device login, never one global token.** The session is what `sid`/`dfp` claims reference and what logout revokes. `device.fingerprint` is captured at login (`POST /auth/google` request `device.fingerprint`) and copied into the `dfp` claim of every token the session mints.
+
+**Multi-device rotation invariant:** a session owns its own chain of rotated `REFRESH_TOKEN` rows. Rotating the refresh token for session A consumes rows of session A only — session B's rows (and B's devices) are untouched. Concurrency is per-row: the conditional `UPDATE ... WHERE consumed_at IS NULL` (§4) serializes exactly one winner per token. Reuse detection works because a rotated token's row keeps `consumed_at` — presenting it again means someone replayed a token the holder already spent.
 
 ---
 
@@ -102,20 +109,22 @@ Canonical shape for **all** non-2xx responses across the whole API (auth + every
 | `traceId` | string | correlates server logs; generated per failed request |
 | `field_errors` | array | optional; `[{ "field", "message" }]` on `VALIDATION_ERROR` / `INVALID_REQUEST_BODY` only |
 
-Every error row in every endpoint table below conforms to this envelope. Generic codes used across modules:
+Every error row in every endpoint table below conforms to this envelope. Generic codes used across modules — **this is the canonical, exhaustive set; service docs reference them by name rather than repeating per-endpoint**:
 
-| Code | Status |
-|---|---|
-| `TOKEN_MISSING` | 401 |
-| `TOKEN_MALFORMED` | 401 |
-| `TOKEN_EXPIRED` | 401 |
-| `TOKEN_INVALID_SIGNATURE` | 401 |
-| `TOKEN_INVALID_AUDIENCE` | 401 |
-| `TOKEN_UNKNOWN_KID` | 401 |
-| `TOO_MANY_REQUESTS` | 429 |
-| `TEMPORARY_ERROR` | 503 |
+| Code | Status | Notes |
+|---|---|---|
+| `TOKEN_MISSING` | 401 | no `Authorization` header |
+| `TOKEN_MALFORMED` | 401 | header isn't a Bearer token / not a JWT |
+| `TOKEN_EXPIRED` | 401 | `exp` passed (clock-skew 30 s) |
+| `TOKEN_INVALID_SIGNATURE` | 401 | signature/`kid` verification failed after JWKS refresh |
+| `TOKEN_INVALID_AUDIENCE` | 401 | `aud` ≠ `fold-mobile` |
+| `TOKEN_UNKNOWN_KID` | 401 | signer key not in local JWKS cache; verifier refreshes once, then refuses |
+| `TOKEN_REVOKED` | 401 | **reserved** — returned only once the future `jti` denylist ships; in V1 access tokens are not revocable and this code is never returned |
+| `ONBOARDING_INCOMPLETE` | 403 | caller's `onb` claim is `false` — the **canonical** code services use for un-onboarded principals, instead of a generic `FORBIDDEN` |
+| `TOO_MANY_REQUESTS` | 429 | see `shared/rate-limits.md` |
+| `TEMPORARY_ERROR` | 503 | |
 
-`TOKEN_*` codes are the **Auth Lib** verification set — every module that validates our JWT returns the same codes, so clients handle them once.
+`TOKEN_*`/`ONBOARDING_INCOMPLETE` are the **Auth Lib** verification set — every module that validates our JWT returns the same codes, so clients handle them once.
 
 ---
 
@@ -150,7 +159,7 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 | `id_token` | string | ✅ | Google ID token (JWT); URL-safe, ≤ 16 KB; `aud` must match this app's Google client id |
 | `device.name` | string | — | ≤ 64 chars; shown in session list |
 | `device.os` | string | — | `ios` \| `android` |
-| `device.fingerprint` | string | — | ≤ 128 chars; used for reuse-grace + session display; must be stable per install |
+| `device.fingerprint` | string | — | ≤ 128 chars; **captured at login and stored on the session, then minted into every token's `dfp` claim**; must be stable per install |
 
 ### Success response
 
@@ -276,45 +285,35 @@ Omitted scenarios resolve to: DB/verifier infrastructure failure → `503 TEMPOR
 
 ---
 
-## 5. POST /auth/logout
+## 5. POST /auth/logout · POST /auth/logout-all
 
-**Purpose:** Invalidate the presented refresh token (single session) or **every session** for the identity (`scope=all`). Access tokens are not touched here — they expire naturally (§1.1).
+**Purpose:** Revoke sessions. `POST /auth/logout` revokes the **one** session identified by the caller's own token (`sid`). `POST /auth/logout-all` revokes **every** session for the credential (`sub`). Access tokens are not touched — they expire naturally (§1.1). Each revoked session emits a `SessionRevoked` event (§9.6).
 
-**Method + path:** `POST /api/v1/auth/logout`
+**Auth requirement:** both require `Authorization: Bearer <access_token>` — the session id comes from the verified token's `sid` claim, so logout works even mid-refresh-rotation (the `sid` is stable across rotations). If the access token has expired, the client refreshes first (`POST /auth/refresh`) to obtain a fresh token carrying `sid`.
 
-**Auth requirement:** none (the refresh token in the body is the revocation key; it is authenticated **not** by the server but by bearing it, same trust model as §4).
+### 5.1 `POST /api/v1/auth/logout`
 
-### Request
+**Request:** headers `Authorization: Bearer <access_token>` · `Content-Type: application/json` — **no body** (revoked session = token's `sid`).
 
-**Headers:** `Content-Type: application/json`
+**Response 204** — no body. Idempotent and anti-enumeration: the session always exists (it minted the verified token), so there is nothing to probe.
 
-**Body — JSON example**
-```json
-{ "refresh_token": "v1.d81mcQ3hH9sB2nT7gKz4LpW6yR8sQ0uV7xY2aB4cD6eF8", "scope": "all" }
-```
+| Status | Code |
+|---|---|
+| — | shared Auth Lib set (§2) — token invalid/expired → refresh + retry |
+| 429 | `TOO_MANY_REQUESTS` |
 
-**Field table**
+### 5.2 `POST /api/v1/auth/logout-all`
 
-| Field | Type | Req | Constraints |
-|---|---|---|---|
-| `refresh_token` | string | ✅ | current token of the session to revoke |
-| `scope` | string | — | `current` (default) \| `all` |
+**Request:** headers `Authorization: Bearer <access_token>` — **no body** (all sessions of the credential = token's `sub`).
 
-### Success response
+**Response 204** — no body. Emits one `SessionRevoked(session_id, credential_id)` **per** revoked session.
 
-**Status 204** — no body.
+| Status | Code |
+|---|---|
+| — | shared Auth Lib set (§2) |
+| 429 | `TOO_MANY_REQUESTS` |
 
-**Semantics:** `current` revokes the `REFRESH_SESSION` the token belongs to (its chain of `REFRESH_TOKEN` rows). `all` revokes **all** `REFRESH_SESSION` rows for the `credential_id`. Revocation is idempotent and anti-enumeration: any syntactically valid request that passes validation returns 204 whether or not the token exists, so callers can't probe token validity.
-
-### Errors
-
-| Status | Code | Message |
-|---|---|---|
-| 400 | `INVALID_REQUEST_BODY` | `Malformed JSON body.` |
-| 422 | `VALIDATION_ERROR` | `refresh_token is required.` / `scope must be 'current' or 'all'.` |
-| 429 | `TOO_MANY_REQUESTS` | `Too many attempts. Try again later.` |
-
-(Expired/unknown/revoked tokens all → 204 by design; only malformed requests error.)
+> **Migration note (breaking from earlier draft):** the earlier refresh-token-in-body + `scope` design is replaced by the Bearer/`sid` model above. Rationale: `sid` is stable and token-carried, so no plaintext refresh token needs to travel to the logout route, and single- vs all-session semantics become two explicit endpoints instead of a scope flag.
 
 ---
 
@@ -474,6 +473,8 @@ Justification: the refresh token is single-use, so the client **cannot** manage 
 
 ### 9.1 Rate limits
 
+Mechanism, headers, envelope, and defaults: `shared/rate-limits.md`. Endpoint-specific numbers:
+
 | Endpoint | Limit | Scope | Window |
 |---|---|---|---|
 | `POST /auth/google` | 5 | per credential (`google_sub`) + 20 per IP | 1 min |
@@ -502,11 +503,20 @@ All responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 
 ### 9.4 Logout vs logout-everywhere
 
-| | `scope=current` | `scope=all` |
+| | `POST /auth/logout` (single) | `POST /auth/logout-all` (everywhere) |
 |---|---|---|
-| Revokes | the one `REFRESH_SESSION` behind the presented token | every `REFRESH_SESSION` for the credential |
-| Exposed via | `POST /auth/logout` (refresh token) | `POST /auth/logout {scope:"all"}` or `DELETE /auth/sessions/{id}` per device |
+| Revokes | the one `REFRESH_SESSION` whose id = the token's `sid` | every `REFRESH_SESSION` for the credential (`sub`) |
+| Also exposed per-device via | `DELETE /auth/sessions/{sessionId}` (§8.2) | `POST /auth/logout-all` |
 | Access tokens | **still valid until `exp` (≤ 15 min)** in both cases — V1 accepts this; a `jti` denylist at the edge is the future mitigation (out of scope) |
+
+**Downstream cleanup:** both endpoints emit `SessionRevoked` (§9.6) with payload `{ "session_id", "credential_id" }` per revoked session. Consumers react — e.g. `notifications` (`api-design/notifications.md`) deletes FCM devices bound to that session id so logout actually stops push, without any module calling auth back.
+
+### 9.6 Transactional event publication (mechanism)
+
+All outbound domain events — including `SessionRevoked` — are published through **Spring Modulith's transactional event publication**: `applicationEventPublisher.publishEvent(...)` inside the same DB transaction that performs the change + `@ApplicationModuleListener` subscribers on the consuming module.
+
+- **At-least-once, retried:** the Modulith event-publication registry keeps an outbox row per event; if the listener fails (e.g. Notification Service is down mid-delete), the event is retried until the listener succeeds or the event is explicitly discarded. A dropped `SessionRevoked` would leave a logged-out device receiving pushes — this guarantee exists precisely to prevent that.
+- **Contract:** event name `SessionRevoked`, payload `{ "session_id", "credential_id" }` (snake_case, JSON). Consistent inside the modulith today and over the same broker after extraction.
 
 ### 9.5 Reuse-detection policy (theft model)
 
@@ -587,13 +597,15 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant A as Auth Service
+    participant N as Notifications Module (listener)
     participant DB as DB
 
-    C->>A: POST /auth/logout {refresh_token, scope: "current" | "all"}
-    A->>DB: revoke session row(s) for credential (all if scope=all)
-    DB-->>A: revoked
+    C->>A: POST /auth/logout (Bearer token -> sid)  |  /auth/logout-all (-> all sessions)
+    A->>DB: revoke REFRESH_SESSION(s)
+    A->>N: emit SessionRevoked {session_id, credential_id} (transactional, at-least-once)
+    N->>N: delete FCM Device rows for session_id
     A-->>C: 204
-    Note over C,A: access token remains valid until exp (<=15 min) -- documented V1 behavior
+    Note over A: access token remains valid until exp (<=15 min) -- documented V1 behavior
 ```
 
 ---

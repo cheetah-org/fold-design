@@ -8,7 +8,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 
 **Resources** addressed by `userId` (`USER.id`, the `oid` claim) — no `/users/me`. Client learns its own `userId` from `POST /users` (and from `POST /auth/refresh` once `oid` appears); a fresh (`onb=false`) client has **no** `userId` yet.
 
-**Owner check:** `userId` from `oid` claim is compared to the path segment; principals whose token has `onb=false` or an absent/unknown `oid` fail owner checks (403) — they can only `POST /users`.
+**Owner check:** `userId` from `oid` claim is compared to the path segment. A caller whose token has `onb=false` (un-onboarded) is rejected with `403 ONBOARDING_INCOMPLETE` on every endpoint except `POST /users` (and auth's own refresh/logout) — never a generic `FORBIDDEN`; see `auth.md` §2. An absent/unknown `oid` with `onb=true` is an internal inconsistency → `401 TOKEN_MALFORMED`.
 
 ---
 
@@ -30,7 +30,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 
 **DTO rules:** this service **never exposes `email`** — it is owned by the Auth Service (`AUTH_CREDENTIAL`, surfaced via `GET /auth/me`). Full `UserDto` exposes `dob` only to self/DEV/ADMIN; public views expose only computed `age`. `priority`, `notes`, `reviewed_by` are moderation-internal.
 
-**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`.
+**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limits** per endpoint values live in each route's table; the cross-service mechanism/envelope is `shared/rate-limits.md` (default 600/min per `userId` where not listed).
 
 **Auth failures (global):** any endpoint requiring a Bearer token returns the shared Auth Lib set (`auth.md` §2) — `401 TOKEN_MISSING` / `TOKEN_MALFORMED` / `TOKEN_EXPIRED` / `TOKEN_INVALID_SIGNATURE` / `TOKEN_INVALID_AUDIENCE` / `TOKEN_UNKNOWN_KID`, or `429 TOO_MANY_REQUESTS`. These are not repeated in per-endpoint tables below.
 
