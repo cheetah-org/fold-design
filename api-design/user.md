@@ -30,7 +30,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 
 **DTO rules:** this service **never exposes `email`** — it is owned by the Auth Service (`AUTH_CREDENTIAL`, surfaced via `GET /auth/me`). Full `UserDto` exposes `dob` only to self/DEV/ADMIN; public views expose only computed `age`. `priority`, `notes`, `reviewed_by` are moderation-internal.
 
-**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limits** per endpoint values live in each route's table; the cross-service mechanism/envelope is `shared/rate-limits.md` (default 600/min per `userId` where not listed).
+**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limits:** per-endpoint values in §Rate limits; mechanism/envelope in `shared/rate-limits.md` (default 600/min per `userId` where not listed).
 
 **Auth failures (global):** any endpoint requiring a Bearer token returns the shared Auth Lib set (`auth.md` §2) — `401 TOKEN_MISSING` / `TOKEN_MALFORMED` / `TOKEN_EXPIRED` / `TOKEN_INVALID_SIGNATURE` / `TOKEN_INVALID_AUDIENCE` / `TOKEN_UNKNOWN_KID`, or `429 TOO_MANY_REQUESTS`. These are not repeated in per-endpoint tables below.
 
@@ -132,7 +132,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 ```json
 {
   "state": "QUEUED",
-  "queue": { "rank": 3, "position": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 }
+  "queue": { "rank": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 }
 }
 ```
 
@@ -155,7 +155,6 @@ Product invariants that drive registration, the admission endpoint, and reactiva
   "category": "UNDERAGE",
   "status": "PENDING",
   "notes": "Photos look younger",
-  "target_shadow_banned": true,
   "created_at": "2026-08-29T09:00:00Z",
   "reviewed_at": null
 }
@@ -192,20 +191,30 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 ## Register
 
 ### `POST /users`
-**Onboarding — auth's identity becomes a `USER`.** Completes the two-step bootstrap: Auth upserts `AUTH_CREDENTIAL` (login) → this endpoint creates the `USER` + empty `PROFILE` linked to the credential via `credential_id` (plain-ID reference, modulith rule 7). Gender/city drive rating admission (`Admission & queue rules`) → 201 `status` `ACTIVE` or `QUEUED` + `queue`. After this call the client runs `POST /auth/refresh` once so subsequent access tokens carry the new `oid` (`auth.md` §3/Appendix A).
+**Onboarding — auth's identity becomes a `USER`.** Completes the two-step bootstrap: Auth upserts `AUTH_CREDENTIAL` (login) → this endpoint creates the `USER` + empty `PROFILE` linked to the credential via `credential_id` (plain-ID reference, modulith rule 7). Gender/city drive ratio admission (`Admission & queue rules`) → 201 `status` `ACTIVE` or `QUEUED` + `queue`. After this call the client runs `POST /auth/refresh` once so subsequent access tokens carry the new `oid` (`auth.md` §3/Appendix A).
+
+**Re-registration after self-deactivation (review fix):** a `DEACTIVATED` credential signing in again gets `onboarded=false` from auth (`auth.md` §3) and may call `POST /users` to create a **fresh** `USER` row — the deactivated row is retained for audit, one live row per credential. This closes the previous dead-end where `DELETE /users/{id}` was irreversible.
 
 **Auth:** Bearer token with `onb=false` (fresh credential). An `onb=true` principal is rejected (409).
 
 **Request**
 ```json
-{ "gender": "MALE", "city": "Bangalore", "dob": "1998-09-02" }
+{
+  "name": "Rohan",
+  "gender": "MALE",
+  "city": "Bangalore",
+  "dob": "1998-09-02"
+}
 ```
 
 | Field | Type | Req | Notes |
 |---|---|---|---|
+| `name` | string | ✅ | from the Google profile (the ID token carries `name`; our access token doesn't, so the client passes it here); ≤ 64 chars |
 | `gender` | `FEMALE` \| `MALE` | ✅ | drives ratio admission; immutable later |
 | `city` | string | ✅ | V1: `Bangalore` |
-| `dob` | date | ⚠️ | only if the Google account (via `auth.md`) provides none |
+| `dob` | date | ✅ | **always required** — Google/Firebase ID tokens never carry DOB (review fix), so the short form collects it; 21+ gate enforced server-side |
+
+> **Transport note (review fix):** `name`/`dob` were previously assumed to arrive "from Google" with no transport. Reality: the Google ID token carries `name` + `email` but **never** `dob` (`auth.md` §3). `email` stays auth-owned; `name` + `dob` are collected by the short form and transported here.
 
 **Response 201**
 ```json
@@ -220,7 +229,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
     "status": "QUEUED",
     "created_at": "2026-08-29T10:00:00Z"
   },
-  "queue": { "rank": 3, "position": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 },
+  "queue": { "rank": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 },
   "profile": { "bio": "", "description": "", "preferences": [], "photos": [] }
 }
 ```
@@ -228,7 +237,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 
 | Status | Code |
 |---|---|
-| 409 | `USER_EXISTS` — principal already onboarded (`onb=true`) |
+| 409 | `USER_EXISTS` — a non-`DEACTIVATED` `USER` row already exists for this credential |
 | 422 | `VALIDATION_ERROR` · `AGE_VERIFICATION_REQUIRED` · `AGE_GATE_BLOCKED` |
 
 ---
@@ -236,7 +245,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 ## Account
 
 ### `GET /users/{userId}`
-Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `PublicUserDto`; anything else → `404 USER_NOT_VISIBLE` (hidden **or** no row — un-onboarded credentials have no `userId` to target, see header notes).
+Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `PublicUserDto`; anything else → `404 USER_NOT_VISIBLE` (hidden **or** no row — un-onboarded credentials have no `userId` to target, see header notes). **Masking never applies to self** (review fix): a `QUEUED`/`SOFT_PAUSED`/`SHADOW_BANNED` caller always gets their own full `AccountResponse`.
 
 **Response 200 — full**
 ```json
@@ -253,7 +262,7 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
   },
   "admission": {
     "state": "QUEUED",
-    "queue": { "rank": 3, "position": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 }
+    "queue": { "rank": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 }
   },
   "profile": { "bio": "", "description": "", "preferences": [], "photos": [] }
 }
@@ -398,11 +407,7 @@ Creates `BLOCK` + linked audit `REPORT(category=BLOCK, status=UPHELD)`. **Block 
 | 422 | `CANNOT_BLOCK_SELF` · `VALIDATION_ERROR` |
 
 ### `DELETE /users/{blockedUserId}/block`
-Unblock → `204` (idempotent); linked audit report kept as history; masking stops.
-
-| Status | Code |
-|---|---|
-| 404 | `NOT_FOUND` — never blocked (idempotent design) |
+Unblock → `204` — **always idempotent**: 204 whether or not a block exists (anti-enumeration, same semantics as `auth.md` logout; review fix — previously contradicted itself by 404ing on never-blocked). The linked audit report is kept as history; masking stops.
 
 ### `GET /users/{userId}/blocks`
 Self / DEV / ADMIN. Blocks **made by** this user. `?page=&size=` → 200 `PagedDto<BlockTx>`.
@@ -424,7 +429,7 @@ Self / DEV / ADMIN. Blocks **made by** this user. `?page=&size=` → 200 `PagedD
 - **Per-reporter rate cap:** max 5 report submissions per reporter per rolling 24 h → `429 REPORT_LIMIT_REACHED`.
 
 ### `POST /users/{reportedUserId}/reports`
-File a report. Applies the shadow-ban policy above. `UNDERAGE` → `priority=HIGH`. → 201 `FiledReportDto`.
+File a report. Applies the shadow-ban policy above. `UNDERAGE` → `priority=HIGH`. → 201 `FiledReportDto`. **Visibility carve-out (review fix):** reporting is allowed regardless of block/visibility state — block-then-report must work, so `USER_NOT_VISIBLE` never gates this endpoint (404 only for a missing or `DEACTIVATED` target).
 
 **Request**
 ```json
@@ -438,7 +443,7 @@ File a report. Applies the shadow-ban policy above. `UNDERAGE` → `priority=HIG
 
 | Status | Code |
 |---|---|
-| 404 | `USER_NOT_VISIBLE` — target hidden |
+| 404 | `NOT_FOUND` — target missing or `DEACTIVATED` (visibility never gates reporting) |
 | 409 | `REPORT_EXISTS` — duplicate `PENDING` (same reporter→reported) |
 | 422 | `REPORT_SELF` · `VALIDATION_ERROR` |
 | 429 | `REPORT_LIMIT_REACHED` — > 5 reports in 24 h |
@@ -543,6 +548,21 @@ DEV / ADMIN. Search + review queue. `?q=&status=&gender=&reports_status=PENDING&
 | Status | Code |
 |---|---|
 | 403 | `FORBIDDEN` |
+
+---
+
+## Rate limits
+
+Mechanism, headers, envelope: `shared/rate-limits.md`. Per-endpoint values (review fix — this table was missing):
+
+| Endpoint | Limit | Scope | Window |
+|---|---|---|---|
+| `POST /users` (onboarding) | 5 | per credential | 1 min |
+| `GET/PATCH/DELETE /users/{userId}` · `GET .../admission` | 120 | per user | 1 min |
+| Profile & photos (all methods) | 120 | per user | 1 min |
+| `POST .../reports` · block/unblock | 30 | per user | 1 min |
+| `GET .../reports*` · `GET .../blocks` | 60 | per user | 1 min |
+| `PATCH .../reports/{rid}` · suspend/reactivate · `GET /users` | 60 | per user | 1 min |
 
 ---
 

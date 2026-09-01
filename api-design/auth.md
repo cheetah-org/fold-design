@@ -159,7 +159,7 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 | `id_token` | string | ✅ | Google ID token (JWT); URL-safe, ≤ 16 KB; `aud` must match this app's Google client id |
 | `device.name` | string | — | ≤ 64 chars; shown in session list |
 | `device.os` | string | — | `ios` \| `android` |
-| `device.fingerprint` | string | — | ≤ 128 chars; **captured at login and stored on the session, then minted into every token's `dfp` claim**; must be stable per install |
+| `device.fingerprint` | string | ✅ | ≤ 128 chars; **captured at login, stored on the session, minted into every token's `dfp` claim**; must be stable per install — required because device-bound requests (e.g. push registration, `notifications.md`) validate against `dfp` |
 
 ### Success response
 
@@ -203,9 +203,13 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 | `onboarded` | boolean | `false` → client must run `POST /users` (users module) |
 | `user` | object\|null | `null` until onboarded; then `{ id }` |
 
-**Flow:** verify ID token (signature, `iss`, `aud`, `exp`) → upsert `AUTH_CREDENTIAL` by `google_sub` → if onboarded, check `USER.status` (blocked statuses → 403) → create `REFRESH_SESSION` + first `REFRESH_TOKEN` (hash stored) → return pair. After the client completes `POST /users`, it calls `POST /auth/refresh` once to obtain an access token carrying `oid`.
+**Flow:** verify ID token (signature, `iss`, `aud`, `exp`) → upsert `AUTH_CREDENTIAL` by `google_sub` → if onboarded, check `USER.status` → create `REFRESH_SESSION` + first `REFRESH_TOKEN` (hash stored) → return pair. After the client completes `POST /users`, it calls `POST /auth/refresh` once to obtain an access token carrying `oid`.
+
+**Status gate:** `SUSPENDED` → `403 ACCOUNT_DISABLED`. `DEACTIVATED` → **not** blocked (review fix — closes the self-deactivation dead-end): the identity re-onboards (`onboarded=false`, `user=null`) and may create a fresh `USER` via `POST /users` (`user.md` Register). `SHADOW_BANNED`/`QUEUED` sign in normally.
 
 > A returned token does **not** guarantee a completed profile: `onboarded=false` means no `USER` row exists yet (client must call `POST /users`, `api-design/user.md` Register). Even `onboarded=true` only means a row exists — its profile fields (bio/photos) are completed independently by that service.
+
+> **Google ID-token contents (review fix):** the ID token carries `sub` (→ `google_sub`), `name`, `email`, `picture` — **never `dob`**. `email` stays auth-owned; `name` + `dob` travel to the users module via `POST /users`.
 
 ### Errors
 
@@ -218,7 +222,7 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 | 401 | `GOOGLE_TOKEN_INVALID_SIGNATURE` | `Google ID token signature could not be verified.` |
 | 401 | `GOOGLE_TOKEN_AUDIENCE_MISMATCH` | `Google ID token was issued for a different app.` |
 | 503 | `GOOGLE_VERIFICATION_UNAVAILABLE` | `Google sign-in is temporarily unavailable. Retry shortly.` |
-| 403 | `ACCOUNT_DISABLED` | `Account is disabled. Contact support.` (returned for `USER.status` `SUSPENDED` / `DEACTIVATED`; generic message on purpose. `SHADOW_BANNED` and `QUEUED` still sign in.) |
+| 403 | `ACCOUNT_DISABLED` | `Account is disabled. Contact support.` (returned for `USER.status` `SUSPENDED` only — a `DEACTIVATED` identity re-onboards fresh, see Flow. Generic message on purpose; `SHADOW_BANNED` and `QUEUED` still sign in.) |
 | 429 | `TOO_MANY_REQUESTS` | `Too many attempts. Try again later.` |
 
 Omitted scenarios resolve to: DB/verifier infrastructure failure → `503 TEMPORARY_ERROR`.
@@ -287,7 +291,7 @@ Omitted scenarios resolve to: DB/verifier infrastructure failure → `503 TEMPOR
 
 ## 5. POST /auth/logout · POST /auth/logout-all
 
-**Purpose:** Revoke sessions. `POST /auth/logout` revokes the **one** session identified by the caller's own token (`sid`). `POST /auth/logout-all` revokes **every** session for the credential (`sub`). Access tokens are not touched — they expire naturally (§1.1). Each revoked session emits a `SessionRevoked` event (§9.6).
+**Purpose:** Revoke sessions. `POST /auth/logout` revokes the **one** session identified by the caller's own token (`sid`). `POST /auth/logout-all` revokes **every** session for the credential (`sub`). Access tokens are not touched — they expire naturally (§1.1). Each revoked session emits a `SessionRevoked` event (§9.5).
 
 **Auth requirement:** both require `Authorization: Bearer <access_token>` — the session id comes from the verified token's `sid` claim, so logout works even mid-refresh-rotation (the `sid` is stable across rotations). If the access token has expired, the client refreshes first (`POST /auth/refresh`) to obtain a fresh token carrying `sid`.
 
@@ -459,7 +463,7 @@ Justification: the refresh token is single-use, so the client **cannot** manage 
 }
 ```
 
-`current` marks the session that minted the presented access token (best-effort via `jti`→session linkage). Errors: the shared Auth Lib set (§2) + `429`.
+`current` marks the session that minted the presented access token — exactly the token's `sid` claim (no `jti` linkage needed). Errors: the shared Auth Lib set (§2) + `429`.
 
 ### 8.2 DELETE /auth/sessions/{sessionId}
 
@@ -489,7 +493,7 @@ All responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 
 | Endpoint | Behavior |
 |---|---|
-| `POST /auth/google` | **Not** inherently idempotent (mints a new session). Client SHOULD send `Idempotency-Key` (header); server keeps the issued `(refresh_token, session)` for ≤ 5 min keyed by it and replays on duplicate, so a lost response doesn't create orphan sessions. |
+| `POST /auth/google` | **Not** inherently idempotent (mints a new session). Client SHOULD send `Idempotency-Key` (header); the replay cache is keyed on **`(verified google_sub, Idempotency-Key)`** — never the header alone (a header-only key would let a replay under a different verified identity receive someone else's refresh token). Issued `(refresh_token, session)` kept ≤ 5 min; a replay under a different identity is treated as a new request. |
 | `POST /auth/refresh` | **Never auto-retry after the request is sent.** Rotation is single-use; a retry presents a consumed token and trips `REFRESH_TOKEN_REUSE`. Client rule: retry only if the request definitively never reached the server (transport error < 15 s and no response), and accept that even then a race can force a re-login. |
 | `POST /auth/logout` | Idempotent by design (§5) — always 204. |
 | `GET *.well-known/jwks.json` | Cacheable (`max-age=3600`); harmless to refresh on `TOKEN_UNKNOWN_KID`. |
@@ -509,16 +513,17 @@ All responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 | Also exposed per-device via | `DELETE /auth/sessions/{sessionId}` (§8.2) | `POST /auth/logout-all` |
 | Access tokens | **still valid until `exp` (≤ 15 min)** in both cases — V1 accepts this; a `jti` denylist at the edge is the future mitigation (out of scope) |
 
-**Downstream cleanup:** both endpoints emit `SessionRevoked` (§9.6) with payload `{ "session_id", "credential_id" }` per revoked session. Consumers react — e.g. `notifications` (`api-design/notifications.md`) deletes FCM devices bound to that session id so logout actually stops push, without any module calling auth back.
+**Downstream cleanup:** both endpoints emit `SessionRevoked` (§9.5) with payload `{ "session_id", "credential_id" }` per revoked session. Consumers react — e.g. `notifications` (`api-design/notifications.md`) deletes FCM devices bound to that session id so logout actually stops push, without any module calling auth back.
 
-### 9.6 Transactional event publication (mechanism)
+### 9.5 Transactional event publication (mechanism)
 
 All outbound domain events — including `SessionRevoked` — are published through **Spring Modulith's transactional event publication**: `applicationEventPublisher.publishEvent(...)` inside the same DB transaction that performs the change + `@ApplicationModuleListener` subscribers on the consuming module.
 
 - **At-least-once, retried:** the Modulith event-publication registry keeps an outbox row per event; if the listener fails (e.g. Notification Service is down mid-delete), the event is retried until the listener succeeds or the event is explicitly discarded. A dropped `SessionRevoked` would leave a logged-out device receiving pushes — this guarantee exists precisely to prevent that.
 - **Contract:** event name `SessionRevoked`, payload `{ "session_id", "credential_id" }` (snake_case, JSON). Consistent inside the modulith today and over the same broker after extraction.
+- **Also emitted:** `CredentialUpserted { credential_id, email }` on every login (idempotent upsert event) — modules project email locally instead of calling auth back (consumed by `notifications.md` for email-bound jobs; review fix — replaces the contradicting "Auth Lib credential lookup").
 
-### 9.5 Reuse-detection policy (theft model)
+### 9.6 Reuse-detection policy (theft model)
 
 Presenting any `REFRESH_TOKEN` row whose `consumed_at` is set → family-wide revocation + security audit event + `401 REFRESH_TOKEN_REUSE`. This deliberately treats the two-client refresh race as theft (fail-safe). A configurable `reuse_grace_ms` (default 60 s) mitigates blameless races: within the window, a presenter matching the session's device fingerprint gets `401 REFRESH_TOKEN_INVALID` (family **not** revoked, no audit event) instead of family revocation — the client must re-login either way, but a legitimately racing second device isn't chain-revoked. Off by default until traffic patterns are known.
 

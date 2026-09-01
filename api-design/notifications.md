@@ -131,7 +131,7 @@ Canonical envelope (shared, `auth.md` §2); `field_errors` only on `VALIDATION_E
 
 A `Device` row is **tied to the auth session** that registered it — it stores `session_id` (from the token's `sid` claim) and `device_fingerprint` (from the token's `dfp` claim). Lifecycle:
 
-- **Logout stops push:** auth emits `SessionRevoked { session_id, credential_id }` (§9.6) on logout/logout-all; this module deletes `Device` rows whose `session_id` matches. Delivery is at-least-once via Spring Modulith transactional events — a failed listener is retried, never dropped.
+- **Logout stops push:** auth emits `SessionRevoked { session_id, credential_id }` (§9.5) on logout/logout-all; this module deletes `Device` rows whose `session_id` matches. Delivery is at-least-once via Spring Modulith transactional events — a failed listener is retried, never dropped.
 - **Re-login on the same device:** `POST /tokens` with a token whose `dfp` matches an existing row for the same `(userId, fingerprint)` replaces that row's `fcm_token` and also removes any *other* sessions' rows on the same fingerprint (one active token per install).
 
 `Device` row: `id, user_id, session_id, platform, fcm_token, device_fingerprint, created_at, last_seen_at`.
@@ -162,7 +162,7 @@ Upsert — create or replace the caller's token for this install. Replace-on-re-
 |---|---|---|---|
 | `fcm_token` | string | ✅ | FCM registration token; ≤ 4 KB |
 | `platform` | `ios` \| `android` | ✅ | |
-| `device.fingerprint` | string | ✅ | must equal the token's **`dfp`** claim (i.e. the fingerprint recorded at login, `auth.md` §3/§4) |
+| `device.fingerprint` | string | ✅ | must equal the token's **`dfp`** claim — the fingerprint recorded at login (required there since the `dfp` fix, `auth.md` §3/§4), so `dfp` is always present |
 
 **Validation:** `device.fingerprint` ≠ the verified token's `dfp` claim → **422 `DEVICE_MISMATCH`** (the presented token wasn't minted by a session for this install). `fcm_token` is echoed in the response exactly once.
 
@@ -286,7 +286,7 @@ Delivery side is **not** client-rate-limited (PENDING queue); email has a config
 - A push that fails on a permanently-invalid FCM token triggers async cleanup of the `Device` row.
 
 ### Consumed event — `SessionRevoked` (at-least-once)
-Publish side: `auth.md` §9.6 — Spring Modulith **transactional event publication** (`@ApplicationModuleListener` + event-publication registry). Contract below is identical to auth's:
+Publish side: `auth.md` §9.5 — Spring Modulith **transactional event publication** (`@ApplicationModuleListener` + event-publication registry). Contract below is identical to auth's:
 
 | Property | Value |
 |---|---|
@@ -299,7 +299,7 @@ A dropped event would leave a logged-out device receiving pushes — the transac
 
 ### Cross-module notes / integration points
 - **Claims used:** `oid`, `sid`, `dfp`, `onb`, `email`, `roles` — all spelled as in `auth.md` §1.1's authoritative claims table.
-- **Recipient email:** token `email` claim for client-presented paths; for server-initiated email jobs (`EXPIRY`/`WEEKLY_SUMMARY`) resolved via Auth Lib credential lookup and stamped on the row's payload at dispatch.
+- **Recipient email:** token `email` claim for client-presented paths; for server-initiated email jobs (`EXPIRY`/`WEEKLY_SUMMARY`) resolved from a local `recipient_email` projection fed by auth's `CredentialUpserted { credential_id, email }` events (transactional, at-least-once — `auth.md` §9.5). No sync calls back to auth, per the modulith rule that modules never call auth. (Review fix: earlier text said "Auth Lib credential lookup", contradicting that rule.)
 - **Un-onboarded gate:** `onb=false` → `403 ONBOARDING_INCOMPLETE` on every endpoint here (no `userId` exists yet).
 - **Types are additive:** adding a type is a contract change (this table + matching/user DTOs), not a schema migration.
 - **ER alignment:** add `VIEW` to `NOTIFICATION.type`; add `channel` on the row; `DEVICE` row keys on `session_id`.

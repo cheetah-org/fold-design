@@ -6,7 +6,7 @@ erDiagram
     AUTH_CREDENTIAL {
         string id PK
         string google_sub UK "Google OAuth sub"
-        string user_id FK
+        string user_id FK "auth-side mirror of USER.credential_id"
         string email
         datetime created_at
     }
@@ -55,9 +55,10 @@ erDiagram
     %% ============ CENTER: USER SERVICE ============
     USER {
         string id PK
-        string name "from Google"
+        string credential_id "plain-ID ref to AUTH_CREDENTIAL.id"
+        string name "from Google profile (client-supplied at POST /users)"
         enum gender "FEMALE | MALE"
-        date dob "from Google"
+        date dob "user-supplied (Google ID tokens carry no DOB)"
         string city
         enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
@@ -209,9 +210,10 @@ erDiagram
     %% Owned entities
     USER {
         string id PK
-        string name "from Google"
+        string credential_id "plain-ID ref to AUTH_CREDENTIAL.id"
+        string name "from Google profile (client-supplied at POST /users)"
         enum gender "FEMALE | MALE"
-        date dob "from Google"
+        date dob "user-supplied (Google ID tokens carry no DOB)"
         string city
         enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
@@ -306,7 +308,7 @@ erDiagram
     AUTH_CREDENTIAL {
         string id PK
         string google_sub UK "Google OAuth sub"
-        string user_id FK
+        string user_id FK "auth-side mirror of USER.credential_id"
         string email
         datetime created_at
     }

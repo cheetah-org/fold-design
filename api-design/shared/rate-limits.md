@@ -5,7 +5,7 @@ Applies to **every** module API (`auth`, `users`, `notifications`, `matching`, �
 ## Mechanism
 
 - Per-scope counters (per `userId` and/or per IP — the coarser-sounding one wins, `429` is returned).
-- Sliding window, in-memory (Redis-less V1); counters reset on window roll.
+- Fixed windows (V1, in-memory, deterministic); counters reset on window roll. Review fix: doc previously said "sliding" while endpoint tables assumed fixed windows — standardized on fixed for V1; swap to rolling when a shared store (Redis) lands, no client-visible contract change.
 - Every response carries:
   - `X-RateLimit-Limit` (window cap)
   - `X-RateLimit-Remaining`
