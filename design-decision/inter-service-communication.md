@@ -77,7 +77,7 @@ sequenceDiagram
     Auth ->> DB: Upsert AUTH_CREDENTIAL (google_sub, email)
     Auth -->> Client: access token + onboarded flag
     alt New user (no USER row yet)
-        Client ->> UserSvc: POST /users (name, gender, location, dob — dob always required)
+        Client ->> UserSvc: POST /users (name, username, gender, location, dob, photos)
         UserSvc ->> DB: Age gate check (21+, server-side)
         UserSvc ->> Ratio: Check gender ratio (SYNC via RatioClient)
         alt Woman OR man with ratio OK
@@ -265,7 +265,7 @@ Every inter-service interaction from the four flows, consolidated.
 
 The flows above are faithful to the core-flow diagrams. Where the real backend differs, it's called out here — nothing was silently rewritten.
 
-1. **Auth creates the user (reg-flow) vs `users` owns `User`.** Onboarding is two steps: (a) the `auth` module verifies the Firebase ID token and upserts `AUTH_CREDENTIAL` against `google_sub`, returning an access token + an `onboarded` flag; (b) the client fills the short form with what Google does **not** provide (`name` comes from the Google profile, `gender`/`location` are always asked, and `dob` is **always required** — Google ID tokens never carry DOB, review fix) and calls `POST /users` **inside the `users` module** — the one place `USER` is written. `users` enforces the 21+ gate server-side, then runs the ratio admission via `RatioClient` (R1). The flow's old `Auth ->> DB: Create user` maps to that write. After a successful registration, `users` publishes `UserRegistered`, and matching/messaging/notifications seed their local projections from it — a fan-out the flow diagram doesn't show.
+1. **Auth creates the user (reg-flow) vs `users` owns `User`.** Onboarding is two steps: (a) the `auth` module verifies the Firebase ID token and upserts `AUTH_CREDENTIAL` against `google_sub`, returning an access token + an `onboarded` flag; (b) the client fills the short form with what Google does **not** provide (`name` comes from the Google profile, `username`/`gender`/`location` are always asked, and `dob` is **always required** — Google ID tokens never carry DOB, review fix) and calls `POST /users` **inside the `users` module** — the one place `USER` is written. `users` enforces the 21+ gate server-side, then runs the ratio admission via `RatioClient` (R1). The flow's old `Auth ->> DB: Create user` maps to that write. After a successful registration, `users` publishes `UserRegistered`, and matching/messaging/notifications seed their local projections from it — a fan-out the flow diagram doesn't show.
 
 2. **Discovery is part of `matching`.** The woman's feed and the eligible-men pool are owned by the `matching` module (its "discovery half" — the deck endpoint is `GET /users/{userId}/feed` in `matching.md` §Discovery feed). The pool is an event-fed projection (L1), not a per-request query. Deck cards are composed at the edge from `users` data (account + profile + photos, one module) via client-interface reads.
 

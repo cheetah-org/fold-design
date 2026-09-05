@@ -32,7 +32,7 @@ Base URL: `https://api.wiingman.in/users/api/v1` — gateway convention `{baseUR
 
 **Location model:** user provides a location via a places API (OpenStreetMap/Google Places). Backend stores `location_name` (display string, e.g. "BTM Layout, Bangalore"), `latitude`, and `longitude`. Region (e.g. "Bangalore metro") is derived server-side from the coordinates for ratio and analytics aggregation. `PublicUserDto` exposes only `location_name` — coordinates are never shared with other users.
 
-**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limiting:** cross-cutting, handled centrally later — no per-endpoint limits in this doc.
+**Limits:** max 6 photos (min 1 at onboarding) · `bio` ≤ 500 · `description` ≤ 2000 · `username` ≤ 30 · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limiting:** cross-cutting, handled centrally later — no per-endpoint limits in this doc.
 
 **Auth failures (global):** any endpoint requiring a Bearer token returns the shared Auth Lib set (`auth.md` §2) — `401 TOKEN_MISSING` / `TOKEN_MALFORMED` / `TOKEN_EXPIRED` / `TOKEN_INVALID_SIGNATURE` / `TOKEN_INVALID_AUDIENCE` / `TOKEN_UNKNOWN_KID`, or `429 TOO_MANY_REQUESTS`. These are not repeated in per-endpoint tables below.
 
@@ -79,6 +79,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 {
   "id": "9f3a1c4e-2b7d-4a81-9c5e-8d2f0a6b3c11",
   "name": "Rohan",
+  "username": "rohan_m",
   "gender": "MALE",
   "dob": "1998-09-02",
   "age": 28,
@@ -92,12 +93,22 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 {
   "id": "9f3a1c4e-2b7d-4a81-9c5e-8d2f0a6b3c11",
   "name": "Rohan",
+  "username": "rohan_m",
   "age": 28,
   "gender": "MALE",
   "location_name": "BTM Layout, Bangalore",
   "bio": "I make coffee",
   "description": "Looking to meet someone older.",
-  "preferences": ["coffee", "live music"],
+  "height": 175,
+  "job_title": "Software Engineer",
+  "company": "Flipkart",
+  "school": "Christ University",
+  "education_level": "UNDERGRAD",
+  "hometown": "Mumbai",
+  "religion": "HINDU",
+  "languages": ["English", "Hindi", "Kannada"],
+  "drinking": "SOMETIMES",
+  "smoking": "NEVER",
   "photos": [
     { "id": "b7e2f9aa-1c3d-4e5f-8a6b-9c0d1e2f3a4b", "position": 0, "url": "...", "prompt": "Golden hour" }
   ]
@@ -106,13 +117,24 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 
 `status`: `ACTIVE` | `QUEUED` | `SUSPENDED` | `SHADOW_BANNED` | `DEACTIVATED`
 
+All profile fields except `bio`, `description`, and `photos` are nullable — omitted when the user hasn't set them.
+
 `ProfileDto` · `PhotoDto` · `AdmissionDto`
 
 ```json
 {
   "bio": "I make coffee",
   "description": "Looking to meet someone older.",
-  "preferences": ["coffee", "live music"],
+  "height": 175,
+  "job_title": "Software Engineer",
+  "company": "Flipkart",
+  "school": "Christ University",
+  "education_level": "UNDERGRAD",
+  "hometown": "Mumbai",
+  "religion": "HINDU",
+  "languages": ["English", "Hindi", "Kannada"],
+  "drinking": "SOMETIMES",
+  "smoking": "NEVER",
   "photos": [{ "id": "b7e2f9aa-1c3d-4e5f-8a6b-9c0d1e2f3a4b", "position": 0, "url": "...", "prompt": "Golden hour" }]
 }
 ```
@@ -202,24 +224,30 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 ```json
 {
   "name": "Rohan",
+  "username": "rohan_m",
   "gender": "MALE",
   "location": {
     "name": "BTM Layout, Bangalore",
     "latitude": 12.9166,
     "longitude": 77.6101
   },
-  "dob": "1998-09-02"
+  "dob": "1998-09-02",
+  "photos": [
+    { "storage_path": "users/9f3a1c4e-2b7d-4a81-9c5e-8d2f0a6b3c11/photos/abc.jpg", "prompt": null }
+  ]
 }
 ```
 
 | Field | Type | Req | Notes |
 |---|---|---|---|
 | `name` | string | ✅ | from the Google profile (the ID token carries `name`; our access token doesn't, so the client passes it here); ≤ 64 chars |
+| `username` | string | ✅ | display handle, not unique; ≤ 30 chars |
 | `gender` | `FEMALE` \| `MALE` | ✅ | drives ratio admission; immutable later |
 | `location.name` | string | ✅ | display name from places API (e.g. "BTM Layout, Bangalore"); ≤ 128 chars |
 | `location.latitude` | double | ✅ | WGS 84 latitude; server derives region for ratio |
 | `location.longitude` | double | ✅ | WGS 84 longitude |
 | `dob` | date | ✅ | **always required** — Google/Firebase ID tokens never carry DOB (review fix), so the short form collects it; 21+ gate enforced server-side |
+| `photos` | array | ✅ | 1–6 photo references; client uploads to Firebase Storage first, then passes `storage_path` + optional `prompt` |
 
 > **Transport note (review fix):** `name`/`dob` were previously assumed to arrive "from Google" with no transport. Reality: the Google ID token carries `name` + `email` but **never** `dob` (`auth.md` §3). `email` stays auth-owned; `name` + `dob` are collected by the short form and transported here.
 
@@ -229,6 +257,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
   "user": {
     "id": "9f3a1c4e-2b7d-4a81-9c5e-8d2f0a6b3c11",
     "name": "Rohan",
+    "username": "rohan_m",
     "gender": "MALE",
     "dob": "1998-09-02",
     "age": 28,
@@ -237,10 +266,10 @@ Product invariants that drive registration, the admission endpoint, and reactiva
     "created_at": "2026-08-29T10:00:00Z"
   },
   "queue": { "rank": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 },
-  "profile": { "bio": "", "description": "", "preferences": [], "photos": [] }
+  "profile": { "bio": null, "description": null, "photos": [{ "id": "b7e2f9aa-...", "position": 0, "url": "...", "prompt": null }] }
 }
 ```
-`queue` is `null` when `status` is `ACTIVE`.
+`queue` is `null` when `status` is `ACTIVE`. Profile fields not set at onboarding (height, job_title, etc.) are omitted from the response.
 
 | Status | Code |
 |---|---|
@@ -260,6 +289,7 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
   "user": {
     "id": "9f3a1c4e-2b7d-4a81-9c5e-8d2f0a6b3c11",
     "name": "Rohan",
+    "username": "rohan_m",
     "gender": "MALE",
     "dob": "1998-09-02",
     "age": 28,
@@ -273,7 +303,21 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
     "state": "QUEUED",
     "queue": { "rank": 3, "total_waiting": 12, "estimated_wait_ms": 3600000 }
   },
-  "profile": { "bio": "", "description": "", "preferences": [], "photos": [] }
+  "profile": {
+    "bio": "I make coffee",
+    "description": "Looking to meet someone older.",
+    "height": 175,
+    "job_title": "Software Engineer",
+    "company": "Flipkart",
+    "school": "Christ University",
+    "education_level": "UNDERGRAD",
+    "hometown": "Mumbai",
+    "religion": "HINDU",
+    "languages": ["English", "Hindi", "Kannada"],
+    "drinking": "SOMETIMES",
+    "smoking": "NEVER",
+    "photos": [{ "id": "b7e2f9aa-1c3d-4e5f-8a6b-9c0d1e2f3a4b", "position": 0, "url": "...", "prompt": "Golden hour" }]
+  }
 }
 ```
 
@@ -282,11 +326,12 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
 | 404 | `USER_NOT_VISIBLE` — blocked (either direction), `SUSPENDED`/`SHADOW_BANNED`/`DEACTIVATED`/`QUEUED`, or no row |
 
 ### `PATCH /users/{userId}`
-Self / DEV / ADMIN. Only `location` mutable (`gender`/`dob`/`name` immutable — Google-sourced / ratio-governing). Location change triggers region re-derivation and ratio re-evaluation. → 200 `UserDto`.
+Self / DEV / ADMIN. Mutable: `location`, `username` (`gender`/`dob`/`name` immutable — Google-sourced / ratio-governing). Location change triggers region re-derivation and ratio re-evaluation. → 200 `UserDto`.
 
 **Request**
 ```json
 {
+  "username": "rohan_dev",
   "location": {
     "name": "Whitefield, Bangalore",
     "latitude": 12.9698,
@@ -328,22 +373,46 @@ Self / DEV / ADMIN. Live rank/wait for `QUEUED` men → 200 `AdmissionDto`. Not 
 Owner-only (DEV/ADMIN bypass). All → `403 FORBIDDEN` for non-owners. User must exist → `404 NOT_FOUND`. Editing is allowed for `QUEUED` users; `DEACTIVATED` → `404`.
 
 ### `PATCH /users/{userId}/profile`
-Partial. Empty `bio`/`description` clears the field (free-form, no curated prompts). → 200 `ProfileDto`.
+Partial — only supplied fields are updated; omitted fields are untouched. Passing `null` clears a nullable field. → 200 `ProfileDto`.
 
 **Request**
 ```json
 {
   "bio": "I make coffee",
   "description": "Looking to meet someone older.",
-  "preferences": ["coffee", "live music"]
+  "height": 175,
+  "job_title": "Software Engineer",
+  "company": "Flipkart",
+  "school": "Christ University",
+  "education_level": "UNDERGRAD",
+  "hometown": "Mumbai",
+  "religion": "HINDU",
+  "languages": ["English", "Hindi", "Kannada"],
+  "drinking": "SOMETIMES",
+  "smoking": "NEVER"
 }
 ```
+
+| Field | Type | Notes |
+|---|---|---|
+| `bio` | string | ≤ 500 chars |
+| `description` | string | ≤ 2000 chars |
+| `height` | integer | cm |
+| `job_title` | string | freetext, ≤ 64 chars |
+| `company` | string | freetext, ≤ 64 chars |
+| `school` | string | freetext, ≤ 128 chars |
+| `education_level` | enum | `HIGH_SCHOOL` \| `UNDERGRAD` \| `POSTGRAD` \| `TRADE_SCHOOL` |
+| `hometown` | string | freetext, ≤ 128 chars |
+| `religion` | enum | `HINDU` \| `MUSLIM` \| `CHRISTIAN` \| `CATHOLIC` \| `SIKH` \| `BUDDHIST` \| `JAIN` \| `SPIRITUAL` \| `AGNOSTIC` \| `ATHEIST` \| `OTHER` |
+| `languages` | string[] | multi-select from predefined list |
+| `drinking` | enum | `YES` \| `SOMETIMES` \| `NEVER` |
+| `smoking` | enum | `YES` \| `SOMETIMES` \| `NEVER` |
 
 | Status | Code |
 |---|---|
 | 403 | `FORBIDDEN` |
 | 404 | `NOT_FOUND` |
-| 422 | `VALIDATION_ERROR` — `bio` > 500 · `description` > 2000 · `preferences` > 20 · wrong types |
+| 422 | `VALIDATION_ERROR` — field length exceeded · invalid enum value · wrong types |
 
 ### `POST /users/{userId}/photos`
 After direct-to-Firebase-Storage upload, registers metadata. `storage_path` must be under `users/<uid>/` where `<uid> == userId`. → 201 `PhotoDto`.

@@ -17,8 +17,8 @@ sequenceDiagram
     Auth -->> Client: access token + userExists / onboarded flag
 
     alt New user (no USER row yet)
-        Client ->> User: Short form (gender, location — dob always required, Google ID tokens carry none)
-        Client ->> UserSvc: POST /users (name, gender, location, dob)
+        Client ->> User: Short form (username, gender, location, photos — dob always required, Google ID tokens carry none)
+        Client ->> UserSvc: POST /users (name, username, gender, location, dob, photos)
         UserSvc ->> DB: Age gate check (21+)
         UserSvc ->> Ratio: Evaluate gender ratio (SYNC)
         alt Woman OR man with ratio OK

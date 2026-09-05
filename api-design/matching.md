@@ -19,7 +19,8 @@ Base URL: `https://api.wiingman.in/matching/api/v1` — gateway convention `{bas
 | Direction | **Women like men** (hetero pairing per product + ER). Men's only actions: accept / pass / unmatch. A male caller on like-creation → `403 FORBIDDEN`, no role bypass. |
 | Age gate | Target must be **strictly younger** than the liker — enforced server-side at like creation **and** re-checked at accept (`422 AGE_RULE`). A failed re-check leaves the like `PENDING` (review fix) — only `pass` clears it before the 48h TTL. |
 | Like TTL | `expires_at = created_at + 48h`. Hourly sweep flips `PENDING → EXPIRED`. Silent: removed from his inbox, she is never told, nothing is notified. |
-| Re-like cooldown | After a pair ends in `PASSED`, `EXPIRED`, or `UNMATCHED`, no new like either direction for **30 days** (configurable) → `409 RELIKE_COOLDOWN`. |
+| Passed re-feed | After a `PASS` or `EXPIRED`, the man re-enters her deck after **7 days** (view only — she sees him again as a card). |
+| Re-like cooldown | After a pair ends in `PASSED`, `EXPIRED`, or `UNMATCHED`, no new like either direction for **30 days** (configurable) → `409 RELIKE_COOLDOWN`. The 7-day re-feed and 30-day re-like are independent: she sees him at day 7, can like again at day 30. |
 | Like volume | **Unlimited** for women (free tier) — no cap, no counters exposed. |
 | Seen/unread | **None** on likes (per decision). The man learns of a like via the `LIKE` push (notifications module); the inbox is a plain paged list. |
 | Match | One `ACTIVE` match per pair. Accept creates it; `MatchCreated` → `messaging` opens the conversation (its id backfills onto the match **asynchronously** — `conversation_id` may be `null` briefly). |
@@ -80,12 +81,15 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
   "from": {
     "id": "3f8c2a11-5b6d-4c7e-9f0a-b1c2d3e4f5a6",
     "name": "Priya",
+    "username": "priya_k",
     "age": 31,
     "gender": "FEMALE",
     "location_name": "BTM Layout, Bangalore",
     "bio": "Coffee, music, long walks",
     "description": "Looking to meet someone younger.",
-    "preferences": ["coffee", "live music"],
+    "height": 165,
+    "drinking": "SOMETIMES",
+    "smoking": "NEVER",
     "photos": []
   },
   "created_at": "2026-09-01T10:00:00Z",
@@ -101,12 +105,15 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
   "counterpart": {
     "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
     "name": "Rohan",
+    "username": "rohan_m",
     "age": 28,
     "gender": "MALE",
     "location_name": "BTM Layout, Bangalore",
     "bio": "I make coffee",
     "description": "Looking to meet someone older.",
-    "preferences": ["coffee"],
+    "height": 175,
+    "drinking": "SOMETIMES",
+    "smoking": "NEVER",
     "photos": []
   },
   "status": "ACTIVE",
@@ -135,12 +142,15 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
     {
       "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
       "name": "Rohan",
+      "username": "rohan_m",
       "age": 28,
       "gender": "MALE",
       "location_name": "BTM Layout, Bangalore",
       "bio": "I make coffee",
       "description": "Looking to meet someone older.",
-      "preferences": ["coffee"],
+      "height": 175,
+      "drinking": "SOMETIMES",
+      "smoking": "NEVER",
       "photos": []
     }
   ],
@@ -221,12 +231,28 @@ Unmatch — either party (must be a member). Sets `UNMATCHED` + `unmatched_by`/`
 
 ## Discovery feed (deck)
 
-**Women only. Men cannot browse** — product rule, enforced server-side (business rule, no role bypass). Cards are served from the **event-fed eligible-men pool** (inter-service-communication.md L1): men who are `ACTIVE`, **strictly younger** than the caller, not blocked either direction, and not already liked/passed by her. The deck is algorithm-agnostic — cards carry no scores, no reasons, no filters in V1.
+**Women only. Men cannot browse** — product rule, enforced server-side (business rule, no role bypass). Cards are served from the **event-fed eligible-men pool** (inter-service-communication.md L1): men who are `ACTIVE`, **strictly younger** than the caller (narrowable via `max_age`/`min_age` filters), within her distance radius, not blocked either direction, and not already liked/passed by her (passed profiles re-enter the pool after a **7-day cooldown**; she can't re-like until the 30-day cooldown expires).
 
 ### `GET /users/{userId}/feed`
 The woman's deck. Owner check + female-only gate. Cursor-based pagination via `FEED_CURSOR` (server-tracked): a call with no `cursor` continues from the server-stored `last_seen_profile_id` and **advances** it; passing `cursor` re-reads from that point (re-scroll) without advancing.
 
 **Query params:** `?limit=` (default 20, max 50) · `?cursor=` (optional; a card id from a previous `next_cursor`)
+
+**Filter params (all optional, all free tier):**
+
+| Param | Type | Notes |
+|---|---|---|
+| `distance_km` | integer | max distance from caller's location; default: no limit (region-wide) |
+| `min_age` | integer | floor within structural "strictly younger" rule |
+| `max_age` | integer | ceiling; must be < caller's age |
+| `min_height` | integer | cm |
+| `max_height` | integer | cm |
+| `religion` | string | comma-separated enum values; match any |
+| `education_level` | string | comma-separated enum values; match any |
+| `drinking` | string | exact enum match |
+| `smoking` | string | exact enum match |
+
+Filters narrow the eligible pool before random shuffle. Men missing a filtered field (e.g. no `religion` set) are **excluded** when that filter is active — incentivizes profile completion.
 
 **Response 200 — `FeedPageDto`**
 ```json
@@ -235,12 +261,15 @@ The woman's deck. Owner check + female-only gate. Cursor-based pagination via `F
     {
       "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
       "name": "Rohan",
+      "username": "rohan_m",
       "age": 28,
       "gender": "MALE",
       "location_name": "BTM Layout, Bangalore",
       "bio": "I make coffee",
       "description": "Looking to meet someone older.",
-      "preferences": ["coffee"],
+      "height": 175,
+      "drinking": "SOMETIMES",
+      "smoking": "NEVER",
       "photos": []
     }
   ],
@@ -257,7 +286,7 @@ The woman's deck. Owner check + female-only gate. Cursor-based pagination via `F
 
 **Like / pass from a card:** the client calls the matching endpoints directly (`POST /users/{targetId}/likes`, §Likes) — the deck has no embedded action endpoints, and a liked/passed card never reappears (matching state excludes it from the pool view).
 
-**Algorithm:** ranking/selection inside the pool is a build-time decision (design-doc "TBD") — this contract is deliberately independent of it.
+**Algorithm:** V1 uses **random shuffle** within the filtered eligible pool. Vector-similarity ranking (embedding bio/description for compatibility scoring) is a future enhancement.
 
 | Status | Code |
 |---|---|

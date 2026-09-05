@@ -52,12 +52,15 @@ Base URL: `https://api.wiingman.in/messaging/api/v1` — gateway convention `{ba
   "counterpart": {
     "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
     "name": "Rohan",
+    "username": "rohan_m",
     "age": 28,
     "gender": "MALE",
     "location_name": "BTM Layout, Bangalore",
     "bio": "I make coffee",
     "description": "Looking to meet someone older.",
-    "preferences": ["coffee"],
+    "height": 175,
+    "drinking": "SOMETIMES",
+    "smoking": "NEVER",
     "photos": []
   },
   "unread_count": 2,

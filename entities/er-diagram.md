@@ -57,6 +57,7 @@ erDiagram
         string id PK
         string credential_id UK "ref to AUTH_CREDENTIAL.id; unique among live (non-DEACTIVATED) rows"
         string name "from Google profile (client-supplied at POST /users)"
+        string username "display handle, not unique"
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
         string location_name "display name from places API (e.g. BTM Layout, Bangalore)"
@@ -69,7 +70,16 @@ erDiagram
         string user_id PK, FK "1:1 USER"
         string bio
         string description
-        json preferences "multiple-choice"
+        int height "cm"
+        string job_title
+        string company
+        string school
+        enum education_level "HIGH_SCHOOL | UNDERGRAD | POSTGRAD | TRADE_SCHOOL"
+        string hometown
+        enum religion "HINDU | MUSLIM | CHRISTIAN | CATHOLIC | SIKH | BUDDHIST | JAIN | SPIRITUAL | AGNOSTIC | ATHEIST | OTHER"
+        json languages "multi-select"
+        enum drinking "YES | SOMETIMES | NEVER"
+        enum smoking "YES | SOMETIMES | NEVER"
     }
     PHOTO {
         string id PK
@@ -226,6 +236,7 @@ erDiagram
         string id PK
         string credential_id UK "ref to AUTH_CREDENTIAL.id; unique among live (non-DEACTIVATED) rows"
         string name "from Google profile (client-supplied at POST /users)"
+        string username "display handle, not unique"
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
         string location_name "display name from places API (e.g. BTM Layout, Bangalore)"
@@ -238,7 +249,16 @@ erDiagram
         string user_id PK, FK "1:1 USER"
         string bio
         string description
-        json preferences "multiple-choice"
+        int height "cm"
+        string job_title
+        string company
+        string school
+        enum education_level "HIGH_SCHOOL | UNDERGRAD | POSTGRAD | TRADE_SCHOOL"
+        string hometown
+        enum religion "HINDU | MUSLIM | CHRISTIAN | CATHOLIC | SIKH | BUDDHIST | JAIN | SPIRITUAL | AGNOSTIC | ATHEIST | OTHER"
+        json languages "multi-select"
+        enum drinking "YES | SOMETIMES | NEVER"
+        enum smoking "YES | SOMETIMES | NEVER"
     }
     PHOTO {
         string id PK

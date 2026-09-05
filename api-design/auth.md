@@ -542,7 +542,7 @@ sequenceDiagram
     DB-->>A: credential created — no USER yet
     A->>DB: Create REFRESH_SESSION + REFRESH_TOKEN (hash)
     A-->>C: 200 {access_token, refresh_token, onboarded:false, user:null}
-    C->>U: POST /users {name, gender, location, dob} (short form, users module)
+    C->>U: POST /users {name, username, gender, location, dob, photos} (short form, users module)
     U-->>C: 201 user created
     C->>A: POST /auth/refresh (rotate -> access token now carries oid)
     A-->>C: 200 {access_token+oid, new refresh_token}

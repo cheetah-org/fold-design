@@ -76,10 +76,14 @@ Download → Sign in with Google
 
 ## Profiles
 
+**Required at onboarding:** name, username (display handle), gender, date of birth, location, photos (1–6)
+
+**Complete later (optional):** bio, description, height, job title, company, school, education level, hometown, religion, languages, drinking, smoking
+
 - Up to 6 photos
 - Bio: free text, anything they want
 - Description: free text, anything they want
-- No mandatory fields beyond the above, no curated prompts, no tags
+- Structured fields (Hinge-style): identity chips (height, gender) + about section (job, school, religion, etc.) + lifestyle (drinking, smoking)
 
 ---
 
@@ -182,7 +186,7 @@ No ads. Ever.
 | Dwell-time auto-like | Removed |
 | Chat duration | 48 hours per message, no extend |
 | Unsend | No, for either party |
-| Profiles | Free-form only, no curated tags or prompts |
+| Profiles | Free-form bio/description + Hinge-style structured fields (height, job, school, religion, lifestyle) |
 | Photos | Up to 6, no mandatory selfie |
 | Chat features | Text only, all unlocked from first message, no gating |
 | Invisible mode | Removed |
@@ -194,7 +198,8 @@ No ads. Ever.
 | Platform | Mobile only, no web app |
 | Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Firebase (Auth, FCM, Storage — all-Firebase) + Railway |
 | Architecture | Modulith — single deployment, strict module boundaries |
-| Discovery algorithm | To be decided at build time |
+| Discovery algorithm | V1: random shuffle within filtered eligible pool. Filters: distance, age range, height, religion, education, drinking, smoking (all free). Vector-similarity ranking deferred. |
+| Passed re-feed | Passed/expired profiles re-enter deck after 7 days; re-like blocked until 30-day cooldown |
 
 ---
 
