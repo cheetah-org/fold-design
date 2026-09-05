@@ -20,6 +20,19 @@ commons/
     matching/MatchingClient.java        # added with the messaging doc
   events/                      # one record per published event, grouped by producer
     users/  auth/  matching/  ratio/  messaging/
+  pubsub/                      # transport-agnostic pub/sub abstraction (see event-abstraction.md)
+    DomainEvent.java           # generic record: DomainEvent<T>(topic, eventType, data, metadata)
+    EventMetadata.java         # record: eventId, objectId, publishedAt, origin, traceId
+    ObjectId.java              # field annotation: marks partition key in payload records
+    DomainEventPublisher.java  # publish API: <T> void publish(T event)
+    DomainEventListener.java   # subscriber annotation
+    EventSerializer.java       # DomainEvent<T> ↔ JSON
+    webhook/                   # external event ingestion (future — built when first provider integrated)
+      WebhookAdapter.java
+      WebhookController.java
+    support/                   # transport implementations
+      InProcessEventPublisher.java       # V1: wraps payload → DomainEvent<T>, delegates to Spring
+      InProcessListenerRegistrar.java    # V1: translates @DomainEventListener → Spring listeners
   exceptions/                  # typed families + ErrorCode enum
   error/ErrorDto.java          # canonical envelope record (doc source: auth.md §2)
   web/PagedDto.java

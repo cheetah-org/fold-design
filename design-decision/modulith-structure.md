@@ -90,6 +90,19 @@ commons/                                      — @ApplicationModule(type = OPEN
     RequestContextFilter.java                 — MDC stamping (observability.md)
   async/
     MdcTaskDecorator.java                     — MDC propagation to async threads
+  pubsub/                                     — transport-agnostic pub/sub (event-abstraction.md)
+    DomainEvent.java                          — generic record: DomainEvent<T>(topic, eventType, data, metadata)
+    EventMetadata.java                        — record: eventId, objectId, publishedAt, origin, traceId
+    ObjectId.java                             — field annotation: marks partition key in payload records
+    DomainEventPublisher.java                 — publish API: <T> void publish(T event)
+    DomainEventListener.java                  — subscriber annotation
+    EventSerializer.java                      — DomainEvent<T> ↔ JSON
+    webhook/
+      WebhookAdapter.java                     — external event ingestion interface
+      WebhookController.java                  — generic POST /webhooks/{provider} endpoint
+    support/
+      InProcessEventPublisher.java            — V1: wraps payload → DomainEvent<T>, delegates to Spring
+      InProcessListenerRegistrar.java         — V1: translates @DomainEventListener → Spring listeners
   security/
     JwtVerifier.java                          — RS256 verification, JWKS cache
     AuthenticatedPrincipal.java               — record: sub, oid, sid, dfp, onb, email, roles
@@ -101,7 +114,7 @@ commons/                                      — @ApplicationModule(type = OPEN
 | Rule | Why |
 |---|---|
 | Depends on **nothing** — no module imports | `commons → module` closes a cycle since every module imports commons |
-| Contains **only**: interfaces, records, enums, exceptions, security verifier, logging utilities | No controllers, no repositories, no services, no business logic, no DB access |
+| Contains **only**: interfaces, records, enums, exceptions, security verifier, logging utilities, pub/sub abstraction | No repositories, no services, no business logic, no DB access. `WebhookController` is the one controller — conditional on `@ConditionalOnBean(WebhookAdapter.class)` |
 | `@ApplicationModule(type = OPEN)` | All sub-packages must be accessible from every module |
 | Adding/changing a commons contract is **doc-first** | Update `api-design/*.md` row, then the code artifact |
 | Records and enums are **additive-only** | No breaking renames — same rule as notification types |
@@ -299,36 +312,42 @@ Single Postgres datasource. All tables in one schema. Module ownership is a conv
 
 ## 7. Event contract
 
-All async inter-module communication uses Spring application events backed by the **Spring Modulith event publication registry** (JPA-persisted, at-least-once, automatic retry).
+All async inter-module communication goes through the **`commons.pubsub` abstraction** (see `event-abstraction.md`). V1 transport is Spring application events backed by the Spring Modulith event publication registry (JPA-persisted, at-least-once, automatic retry). The abstraction decouples module code from transport so the swap to Kafka requires zero module changes.
 
 ### Publishing
 
 ```java
-// In the service that owns the event
-applicationEventPublisher.publishEvent(
-    new UserRegistered(userId, credentialId, gender, region, status, Instant.now())
+// In the service that owns the event — inject the abstraction, not Spring's API
+private final DomainEventPublisher eventPublisher;
+
+eventPublisher.publish(
+    new UserRegistered(userId, credentialId, gender, region, "ACTIVE")
 );
+// publisher auto-wraps into DomainEvent<UserRegistered>:
+//   topic = "fold.users.user-registered", objectId = userId (via @ObjectId)
 ```
 
-The event record (`UserRegistered`) lives in `commons.events.users` — both publisher and consumer import the same record. The event is persisted in the same transaction as the business operation (outbox pattern).
+The event record (`UserRegistered`) is a plain Java record in `commons.events.users` with an `@ObjectId` field — it does not implement any interface. The publisher wraps it into `DomainEvent<T>` with auto-derived topic, metadata, and `objectId` (partition key). In V1, `InProcessEventPublisher` delegates to Spring's `ApplicationEventPublisher` — the event is persisted in the same transaction (outbox pattern).
 
 ### Consuming
 
 ```java
-// In the consuming module's listener package
-@ApplicationModuleListener
-void onUserRegistered(UserRegistered event) {
-    // react — e.g. add to eligible-men pool
+// In the consuming module's listener package — use the abstraction annotation
+@DomainEventListener
+void onUserRegistered(DomainEvent<UserRegistered> event) {
+    UserRegistered data = event.data();
+    // event.metadata().objectId()  → userId (partition key)
+    // event.metadata().traceId()   → log correlation
 }
 ```
 
-`@ApplicationModuleListener` = `@Async` + `@TransactionalEventListener(phase = AFTER_COMMIT)`. The listener runs asynchronously after the publishing transaction commits. If it fails, the event publication registry retries it.
+In V1, `InProcessListenerRegistrar` translates `@DomainEventListener` into `@Async` + `@TransactionalEventListener(phase = AFTER_COMMIT)`. The listener runs asynchronously after the publishing transaction commits. If it fails, the event publication registry retries it.
 
 ### Rules
 
 | Rule | Why |
 |---|---|
-| Event records are Java `record` types in `commons.events` | Immutable, serializable, single source of truth |
+| Event records are plain Java `record` types in `commons.events` with `@ObjectId` | Immutable, serializable, single source of truth; `@ObjectId` marks the partition key |
 | Producers publish only their own events | `users` publishes `users.*` events, never `matching.*` |
 | Consumers must be **idempotent** | At-least-once delivery means duplicate deliveries are possible |
 | No event chaining across more than 2 hops | If A → B → C, consider whether A should publish directly to C |
@@ -423,7 +442,7 @@ These rules must be followed across the entire repository to maintain modulith c
 | 4 | Root package contains only the `InProcessXClient` bean (if any) | Code review |
 | 5 | No cross-module JPA relations — plain ID strings only | Code review + `@ApplicationModuleTest` table ownership |
 | 6 | Cross-module sync = client interface in commons | No direct service imports across modules |
-| 7 | Cross-module async = event record in commons | No `@Async` calls across module boundaries |
+| 7 | Cross-module async = event record in commons, published/consumed via `commons.pubsub` abstraction | No direct `ApplicationEventPublisher` or `@ApplicationModuleListener` — always through `DomainEventPublisher` / `@DomainEventListener` |
 | 8 | Event listeners are idempotent | At-least-once delivery guarantee requires it |
 | 9 | One table owner per module — no shared writes | Table ownership map (§6) is authoritative |
 | 10 | Module-specific config under `fold.{module}.*` | `@ConfigurationProperties` in each module's `config/` |

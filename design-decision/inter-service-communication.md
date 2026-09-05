@@ -13,7 +13,7 @@ Every interaction between two services is **either synchronous or asynchronous**
 | Channel | What it means | Mechanism in the modulith | Mechanism after extraction to microservices |
 |---|---|---|---|
 | **SYNC** — "I need the answer now to proceed" | Caller blocks until the producer returns a value | **Client interface owned by the caller**, backed by a direct in-process call into the producer module's public API (`InProcessUserClient` today) | Same interface, new `HttpUserClient` impl — swapped via Spring profile/config, callers unchanged |
-| **ASYNC** — "Something happened, others may react independently" | Fire-and-forget event; producer does not wait | Standard **Spring application event** (`@ApplicationModuleListener`, backed by the Modulith event-publication registry so events survive restarts) | Same publish call, externalized via the Modulith **outbox** to a broker (Kafka/RabbitMQ) |
+| **ASYNC** — "Something happened, others may react independently" | Fire-and-forget event; producer does not wait | `commons.pubsub` abstraction — `DomainEventPublisher.publish()` + `@DomainEventListener` (V1: backed by Spring Modulith event-publication registry; see `event-abstraction.md`) | Same abstraction, transport swapped to Kafka via Spring profile — zero module code changes |
 | **CLIENT** (context only) | Mobile client → service over HTTP/WebSocket | Not an inter-service channel | n/a |
 | **DB** (context only) | A service reading/writing the shared Postgres | Single datasource, module-owned tables (rule 7) | Separate DB per service |
 

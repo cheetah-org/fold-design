@@ -200,6 +200,7 @@ No ads. Ever.
 | Architecture | Modulith — single deployment, strict module boundaries |
 | Discovery algorithm | V1: random shuffle within filtered eligible pool. Filters: distance, age range, height, religion, education, drinking, smoking (all free). Vector-similarity ranking deferred. |
 | Passed re-feed | Passed/expired profiles re-enter deck after 7 days; re-like blocked until 30-day cooldown |
+| Event abstraction | `commons.pubsub` — transport-agnostic pub/sub (`DomainEventPublisher` + `@DomainEventListener`). V1: in-process Spring events. Kafka swap via profile, zero module code changes. External webhooks normalized through `WebhookAdapter` into the same pipeline. |
 
 ---
 
