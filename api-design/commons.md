@@ -23,6 +23,9 @@ commons/
   exceptions/                  # typed families + ErrorCode enum
   error/ErrorDto.java          # canonical envelope record (doc source: auth.md §2)
   web/PagedDto.java
+    RequestContextFilter.java  # MDC filter — stamps traceId, requestId, userId, module (see observability.md)
+  async/
+    MdcTaskDecorator.java      # propagates MDC to async event listener threads
   security/                    # folded Auth Lib — JWT verification (see §Security)
 ```
 
