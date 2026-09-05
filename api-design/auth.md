@@ -121,7 +121,7 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 | `TOKEN_UNKNOWN_KID` | 401 | signer key not in local JWKS cache; verifier refreshes once, then refuses |
 | `TOKEN_REVOKED` | 401 | **reserved** — returned only once the future `jti` denylist ships; in V1 access tokens are not revocable and this code is never returned |
 | `ONBOARDING_INCOMPLETE` | 403 | caller's `onb` claim is `false` — the **canonical** code services use for un-onboarded principals, instead of a generic `FORBIDDEN` |
-| `TOO_MANY_REQUESTS` | 429 | see `shared/rate-limits.md` |
+| `TOO_MANY_REQUESTS` | 429 | handled centrally by shared infrastructure (TBD) |
 | `TEMPORARY_ERROR` | 503 | |
 
 `TOKEN_*`/`ONBOARDING_INCOMPLETE` are the **Auth Lib** verification set — every module that validates our JWT returns the same codes, so clients handle them once.
@@ -134,7 +134,7 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 
 **Method + path:** `POST /api/v1/auth/google`
 
-**Auth requirement:** none (public but rate-limited; this endpoint is the only public token-minting surface).
+**Auth requirement:** none (public; this endpoint is the only public token-minting surface).
 
 ### Request
 
@@ -475,19 +475,9 @@ Justification: the refresh token is single-use, so the client **cannot** manage 
 
 ## 9. Non-functional notes
 
-### 9.1 Rate limits
+### 9.1 Rate limiting
 
-Mechanism, headers, envelope, and defaults: `shared/rate-limits.md`. Endpoint-specific numbers:
-
-| Endpoint | Limit | Scope | Window |
-|---|---|---|---|
-| `POST /auth/google` | 5 | per credential (`google_sub`) + 20 per IP | 1 min |
-| `POST /auth/refresh` | 30 | per credential | 15 min (a device refreshes ≈ 1/15 min) |
-| `POST /auth/logout` | 30 | per credential | 1 min |
-| `GET /auth/me` · `GET/DELETE /auth/sessions*` | 60 | per credential | 1 min |
-| `GET /.well-known/jwks.json` | 120 | per IP | 1 min (CDN-cacheable) |
-
-All responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`; on breach → `429 TOO_MANY_REQUESTS` + `Retry-After`. Exceeded refresh attempts do **not** trigger reuse detection (they're filtered before the token is touched).
+Rate limiting is a cross-cutting concern handled by shared infrastructure, not implemented per-endpoint here — mechanism TBD (same placeholder policy as `ratio.md`/`analytics.md`). Security note preserved: when central throttling lands, throttled refresh attempts must **not** trigger reuse detection (they're filtered before the token is touched).
 
 ### 9.2 Idempotency
 

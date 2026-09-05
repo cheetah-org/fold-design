@@ -105,7 +105,7 @@ History for a thread the caller is a member of. Cursor-paged, newest first: `?be
 | 404 | `NOT_FOUND` — thread gone (purged/cleared/never existed) |
 
 ### `POST /users/{userId}/conversations/{conversationId}/messages`
-Send. Guards in order: member (`403 FORBIDDEN`) → thread exists (`404 NOT_FOUND`) → counterpart visible (`404 USER_NOT_VISIBLE` — masked/unmatched/deactivated/blocked; indistinguishable) → validation (`422`) → flood (`429`). Sets `expires_at = now + 48h`; delivers to the counterpart via WebSocket (§Delivery).
+Send. Guards in order: member (`403 FORBIDDEN`) → thread exists (`404 NOT_FOUND`) → counterpart visible (`404 USER_NOT_VISIBLE` — masked/unmatched/deactivated/blocked; indistinguishable) → validation (`422`). Sets `expires_at = now + 48h`; delivers to the counterpart via WebSocket (§Delivery).
 
 **Request**
 ```json
@@ -123,7 +123,6 @@ Send. Guards in order: member (`403 FORBIDDEN`) → thread exists (`404 NOT_FOUN
 | 403 | `ONBOARDING_INCOMPLETE` · `FORBIDDEN` — not a member |
 | 404 | `NOT_FOUND` — thread gone · `USER_NOT_VISIBLE` — counterpart masked |
 | 422 | `VALIDATION_ERROR` — empty/oversized `body` |
-| 429 | `TOO_MANY_REQUESTS` — flood control (30 msgs/min per conversation) |
 
 ### `POST /users/{userId}/conversations/{conversationId}/read`
 Mark-read: sets the caller's `last_read_message_id = message_id` (unread → 0 from there). No receipts — the counterpart learns nothing.
@@ -192,7 +191,8 @@ Clear **own view** (WhatsApp-style) — idempotent `204`; never affects the othe
 All transactional, at-least-once (mechanism per `auth.md` §9.5); lifecycle handlers are idempotent.
 
 ### Flood control
-30 msgs/min per conversation (per sender), plus the shared cross-cutting limits — mechanism TBD (same placeholder policy as `ratio.md`/`analytics.md`).
+
+Removed for now — chat flood/abuse controls will be defined together with the central cross-cutting rate-limiting mechanism (placeholder policy as in `ratio.md`/`analytics.md`).
 
 ### ER additions (alignment note)
 `CONVERSATION_MEMBER` gains `last_read_message_id` (unread badges) and `cleared_at` (self-clear — distinct from `visible`, which masking flips, so a `BlockRemoved` restore doesn't resurrect a deliberately cleared thread).

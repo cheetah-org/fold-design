@@ -30,7 +30,7 @@ Base URL: `https://api.wiingman.in/users/api/v1` — gateway convention `{baseUR
 
 **DTO rules:** this service **never exposes `email`** — it is owned by the Auth Service (`AUTH_CREDENTIAL`, surfaced via `GET /auth/me`). Full `UserDto` exposes `dob` only to self/DEV/ADMIN; public views expose only computed `age`. `priority`, `notes`, `reviewed_by` are moderation-internal.
 
-**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limits:** per-endpoint values in §Rate limits; mechanism/envelope in `shared/rate-limits.md` (default 600/min per `userId` where not listed).
+**Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limiting:** cross-cutting, handled centrally later — no per-endpoint limits in this doc.
 
 **Auth failures (global):** any endpoint requiring a Bearer token returns the shared Auth Lib set (`auth.md` §2) — `401 TOKEN_MISSING` / `TOKEN_MALFORMED` / `TOKEN_EXPIRED` / `TOKEN_INVALID_SIGNATURE` / `TOKEN_INVALID_AUDIENCE` / `TOKEN_UNKNOWN_KID`, or `429 TOO_MANY_REQUESTS`. These are not repeated in per-endpoint tables below.
 
@@ -550,18 +550,9 @@ DEV / ADMIN. Search + review queue. `?q=&status=&gender=&reports_status=PENDING&
 
 ---
 
-## Rate limits
+## Rate limiting
 
-Mechanism, headers, envelope: `shared/rate-limits.md`. Per-endpoint values (review fix — this table was missing):
-
-| Endpoint | Limit | Scope | Window |
-|---|---|---|---|
-| `POST /users` (onboarding) | 5 | per credential | 1 min |
-| `GET/PATCH/DELETE /users/{userId}` · `GET .../admission` | 120 | per user | 1 min |
-| Profile & photos (all methods) | 120 | per user | 1 min |
-| `POST .../reports` · block/unblock | 30 | per user | 1 min |
-| `GET .../reports*` · `GET .../blocks` | 60 | per user | 1 min |
-| `PATCH .../reports/{rid}` · suspend/reactivate · `GET /users` | 60 | per user | 1 min |
+Rate limiting is a cross-cutting concern handled by shared infrastructure, not implemented per-endpoint here — mechanism TBD (same placeholder policy as `ratio.md`/`analytics.md`).
 
 ---
 

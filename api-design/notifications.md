@@ -259,18 +259,9 @@ Partial update. `{ "preferences": [ ...to enable/disable... ] }` — entries mus
 
 ---
 
-## Rate limits
+## Rate limiting
 
-Mechanism, headers, envelope, and defaults: **`shared/rate-limits.md`**. Per-endpoint values:
-
-| Endpoint | Limit | Scope | Window |
-|---|---|---|---|
-| `GET/DELETE .../tokens*` · `POST .../tokens` | 20 | per user | 1 min |
-| `GET .../notifications*` (list, unread) | 120 | per user | 1 min |
-| `PATCH .../notifications/{id}` · `.../read-all` | 240 | per user | 1 min |
-| `GET/PATCH .../notification-preferences` | 60 | per user | 1 min |
-
-Delivery side is **not** client-rate-limited (PENDING queue); email has a configurable daily cap (default 200/day, `WEEKLY_SUMMARY` batch runs off-peak).
+Rate limiting is a cross-cutting concern handled by shared infrastructure, not implemented per-endpoint here — mechanism TBD (same placeholder policy as `ratio.md`/`analytics.md`). Delivery side is **not** client-rate-limited (PENDING queue); email keeps its configurable daily cap (default 200/day, `WEEKLY_SUMMARY` batch runs off-peak) — that's a delivery budget, not rate limiting.
 
 ---
 

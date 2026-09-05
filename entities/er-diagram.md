@@ -15,13 +15,13 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "f(onboarding_time)"
+        int rank "rank_of(onboarded_time); currently = onboarded_time"
         datetime admitted_at
         datetime created_at
     }
     RATIO_EVENT_LOG {
         string id PK
-        enum type "ADMITTED | SOFT_PAUSED | DEACTIVATED"
+        enum type "ADMITTED | QUEUED | DEACTIVATED"
         string user_id FK
         datetime at
     }
@@ -32,7 +32,6 @@ erDiagram
         string city
         int active_women
         int active_men
-        boolean admission_open
         datetime updated_at
     }
     PROFILE_VIEW_EVENT {
@@ -60,7 +59,7 @@ erDiagram
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
         string city
-        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
+        enum status "ACTIVE | QUEUED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
     PROFILE {
@@ -215,7 +214,7 @@ erDiagram
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
         string city
-        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
+        enum status "ACTIVE | QUEUED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
     PROFILE {
@@ -264,7 +263,7 @@ erDiagram
 ```
 # ratio-service
 
-Owns the male admission waitlist and ratio audit trail. CRUD for `ADMISSION_QUEUE`, `RATIO_EVENT_LOG`. Reads `RATIO_STATE` (owned by Analytics Service) to decide `admission_open`; emits status events that User Service applies to `USER`.
+Owns the male admission waitlist and ratio audit trail. CRUD for `ADMISSION_QUEUE`, `RATIO_EVENT_LOG`. Reads `RATIO_STATE` (owned by Analytics Service; raw counts only) to decide gate state; emits status events that User Service applies to `USER`.
 
 ```mermaid
 erDiagram
@@ -272,13 +271,13 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "f(onboarding_time)"
+        int rank "rank_of(onboarded_time); currently = onboarded_time"
         datetime admitted_at
         datetime created_at
     }
     RATIO_EVENT_LOG {
         string id PK
-        enum type "ADMITTED | SOFT_PAUSED | DEACTIVATED"
+        enum type "ADMITTED | QUEUED | DEACTIVATED"
         string user_id FK
         datetime at
     }
@@ -289,7 +288,6 @@ erDiagram
     }
     RATIO_STATE {
         string id PK
-        boolean admission_open
     }
 
     %% Relationships
@@ -453,7 +451,7 @@ erDiagram
 
 # analytics-service
 
-Reads domain events, owns aggregates and gender-ratio state. CRUD for `RATIO_STATE`, `PROFILE_VIEW_EVENT`, `ENGAGEMENT_FACT`. `RATIO_STATE` is consumed read-only by Ratio Service; `PROFILE_VIEW_EVENT` powers "X women viewed your profile today" and women's like-delivery insights.
+Reads domain events, owns aggregates and raw gender counts. CRUD for `RATIO_STATE`, `PROFILE_VIEW_EVENT`, `ENGAGEMENT_FACT`. `RATIO_STATE` (raw counts only, no gate state) is consumed read-only by Ratio Service; `PROFILE_VIEW_EVENT` powers "X women viewed your profile today" and women's like-delivery insights.
 
 ```mermaid
 erDiagram
@@ -463,7 +461,6 @@ erDiagram
         string city
         int active_women
         int active_men
-        boolean admission_open
         datetime updated_at
     }
     PROFILE_VIEW_EVENT {

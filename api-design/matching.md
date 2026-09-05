@@ -44,7 +44,7 @@ Base URL: `https://api.wiingman.in/matching/api/v1` — gateway convention `{bas
 
 ## Error
 
-Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY_REQUESTS` per `shared/rate-limits.md`. None repeated per endpoint.
+Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY_REQUESTS` may be returned by central infrastructure (mechanism TBD). None repeated per endpoint.
 
 ```json
 {
@@ -267,17 +267,9 @@ The woman's deck. Owner check + female-only gate. Cursor-based pagination via `F
 
 ---
 
-## Rate limits
+## Rate limiting
 
-Mechanism, headers, envelope: `shared/rate-limits.md`. Per-endpoint values:
-
-| Endpoint | Limit | Scope | Window |
-|---|---|---|---|
-| `POST .../likes` | 60 | per user | 1 min |
-| `GET .../feed` | 60 | per user | 1 min |
-| `GET .../likes` · `GET .../matches` | 120 | per user | 1 min |
-| accept · pass | 60 | per user | 1 min |
-| `DELETE .../matches/{id}` | 30 | per user | 1 min |
+Rate limiting is a cross-cutting concern handled by shared infrastructure, not implemented per-endpoint here — mechanism TBD (same placeholder policy as `ratio.md`/`analytics.md`).
 
 ---
 
