@@ -1,6 +1,6 @@
 # User Service — API
 
-Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
+Base URL: `https://api.wiingman.in/users/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `GET https://api.wiingman.in/users/api/v1/users/{userId}`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
 **Auth:** `Authorization: Bearer <access_token>` — JWT issued by the Auth Service. The users module reads only the token claims it needs (`sub` = `AUTH_CREDENTIAL.id`, `oid` = `USER.id`, `onb`, `roles`) — see `auth.md` §1.1 for the full token contract. **Every endpoint below requires a valid Bearer token** unless stated otherwise.
 
@@ -26,7 +26,7 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 | `POST /users/{userId}/suspend` · `/reactivate` | ❌ | ✅ | ✅ |
 | `GET /users` (search + review queue) | ❌ 403 | ✅ | ✅ |
 
-**Visibility:** non-owner, non-privileged `GET /users/{userId}` of a blocked (either direction), `SUSPENDED`, `SHADOW_BANNED`, `DEACTIVATED`, `SOFT_PAUSED`, or `QUEUED` user → `404 USER_NOT_VISIBLE` (self never masked — see §GET /users/{userId}). The same single response is returned for "no row" (un-onboarded credential), unknown id, and hidden users — callers can't distinguish.
+**Visibility:** non-owner, non-privileged `GET /users/{userId}` of a blocked (either direction), `SUSPENDED`, `SHADOW_BANNED`, `DEACTIVATED`, or `QUEUED` user → `404 USER_NOT_VISIBLE` (self never masked — see §GET /users/{userId}). The same single response is returned for "no row" (un-onboarded credential), unknown id, and hidden users — callers can't distinguish.
 
 **DTO rules:** this service **never exposes `email`** — it is owned by the Auth Service (`AUTH_CREDENTIAL`, surfaced via `GET /auth/me`). Full `UserDto` exposes `dob` only to self/DEV/ADMIN; public views expose only computed `age`. `priority`, `notes`, `reviewed_by` are moderation-internal.
 
@@ -58,15 +58,14 @@ Canonical envelope (shared across all modules — see `auth.md` §2). `field_err
 Product invariants that drive registration, the admission endpoint, and reactivation:
 
 - **Who queues:** men only. Women are always admitted immediately (the product keeps `active_women ≥ active_men`).
-- **Ratio measured at:** city level (`RATIO_STATE.active_women` vs `active_men`, Bangalore for V1), based on counted `ACTIVE` users. `DEACTIVATED`, `SUSPENDED`, `SHADOW_BANNED`, `SOFT_PAUSED`, and `QUEUED` users are **not** counted as active for either side.
-- **Gate:** `admission_open = active_women >= active_men`.
+- **Ratio measured at:** city level (`RATIO_STATE.active_women` vs `active_men`, Bangalore for V1), based on counted `ACTIVE` users. `DEACTIVATED`, `SUSPENDED`, `SHADOW_BANNED`, and `QUEUED` users are **not** counted as active for either side.
+- **Gate:** `computed_open = active_women >= active_men` — computed by `ratio` (which holds any manual override); never a stored field (`admission_open` dropped from `RATIO_STATE`).
   - Woman registering → `ACTIVE`.
   - Man registering + gate open → `ACTIVE`.
   - Man registering + gate closed → `QUEUED`, FIFO by onboarding time; `rank` = number of earlier queued men + 1.
 - **Rank / wait estimate:** `estimated_wait_ms` = `distinct_active_women_churn_rate`-based heuristic: `pending_ahead × rolling_avg_admission_interval`, floor 5 min, computed by the `ratio` module and stored with the queue snapshot. Exact algorithm is a build-time decision.
-- **Promotion:** the `ratio` module evaluates on every deactivation event and on a 5-min cadence. While the gate is open it admits from the front (FIFO), emitting `AdmittedFromQueue` → users module flips `status=ACTIVE`, `notifications` pushes `QueueStatusChanged`.
-- **`SOFT_PAUSED`:** if the gate tips closed after admissions (women left), the *most recently admitted* men are soft-paused first (reverse admission order) until counts rebalance; they are hidden from discovery and resume to `ACTIVE` when the gate reopens.
-- **Profile editing is allowed while `QUEUED`/`SOFT_PAUSED`** (men complete profiles while waiting); it is blocked only for `DEACTIVATED` (`404`).
+- **Promotion:** the `ratio` module evaluates on every deactivation event and on a 5-min cadence. While the gate is open it admits from the front (FIFO), emitting `AdmittedFromQueue` → users module flips `status=ACTIVE`, `notifications` pushes the admission ("You're in").
+- **Profile editing is allowed while `QUEUED`** (men complete profiles while waiting); it is blocked only for `DEACTIVATED` (`404`).
 
 ---
 
@@ -103,7 +102,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 }
 ```
 
-`status`: `ACTIVE` | `QUEUED` | `SOFT_PAUSED` | `SUSPENDED` | `SHADOW_BANNED` | `DEACTIVATED`
+`status`: `ACTIVE` | `QUEUED` | `SUSPENDED` | `SHADOW_BANNED` | `DEACTIVATED`
 
 `ProfileDto` · `PhotoDto` · `AdmissionDto`
 
@@ -127,7 +126,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 }
 ```
 
-`state`: `ACTIVE` | `QUEUED` | `SOFT_PAUSED` | `DEACTIVATED`; `queue` present only when `QUEUED`:
+`state`: `ACTIVE` | `QUEUED` | `DEACTIVATED`; `queue` present only when `QUEUED`:
 
 ```json
 {
@@ -245,7 +244,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 ## Account
 
 ### `GET /users/{userId}`
-Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `PublicUserDto`; anything else → `404 USER_NOT_VISIBLE` (hidden **or** no row — un-onboarded credentials have no `userId` to target, see header notes). **Masking never applies to self** (review fix): a `QUEUED`/`SOFT_PAUSED`/`SHADOW_BANNED` caller always gets their own full `AccountResponse`.
+Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `PublicUserDto`; anything else → `404 USER_NOT_VISIBLE` (hidden **or** no row — un-onboarded credentials have no `userId` to target, see header notes). **Masking never applies to self** (review fix): a `QUEUED`/`SHADOW_BANNED` caller always gets their own full `AccountResponse`.
 
 **Response 200 — full**
 ```json
@@ -270,7 +269,7 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
 
 | Status | Code |
 |---|---|
-| 404 | `USER_NOT_VISIBLE` — blocked (either direction), `SUSPENDED`/`SHADOW_BANNED`/`DEACTIVATED`/`SOFT_PAUSED`/`QUEUED`, or no row |
+| 404 | `USER_NOT_VISIBLE` — blocked (either direction), `SUSPENDED`/`SHADOW_BANNED`/`DEACTIVATED`/`QUEUED`, or no row |
 
 ### `PATCH /users/{userId}`
 Self / DEV / ADMIN. Only `city` mutable (`gender`/`dob`/`name` immutable — Google-sourced / ratio-governing). → 200 `UserDto`.
@@ -299,7 +298,7 @@ Self / DEV / ADMIN. Soft-deactivate → `status=DEACTIVATED` (row kept for audit
 ## Admission & queue
 
 ### `GET /users/{userId}/admission`
-Self / DEV / ADMIN. Live rank/wait for `QUEUED`/`SOFT_PAUSED` men → 200 `AdmissionDto`. Not queued/paused → `state=ACTIVE`, `queue=null`.
+Self / DEV / ADMIN. Live rank/wait for `QUEUED` men → 200 `AdmissionDto`. Not queued → `state=ACTIVE`, `queue=null`.
 
 | Status | Code |
 |---|---|
@@ -310,7 +309,7 @@ Self / DEV / ADMIN. Live rank/wait for `QUEUED`/`SOFT_PAUSED` men → 200 `Admis
 
 ## Profile & photos
 
-Owner-only (DEV/ADMIN bypass). All → `403 FORBIDDEN` for non-owners. User must exist → `404 NOT_FOUND`. Editing is allowed for `QUEUED`/`SOFT_PAUSED` users; `DEACTIVATED` → `404`.
+Owner-only (DEV/ADMIN bypass). All → `403 FORBIDDEN` for non-owners. User must exist → `404 NOT_FOUND`. Editing is allowed for `QUEUED` users; `DEACTIVATED` → `404`.
 
 ### `PATCH /users/{userId}/profile`
 Partial. Empty `bio`/`description` clears the field (free-form, no curated prompts). → 200 `ProfileDto`.
@@ -482,7 +481,7 @@ DEV / ADMIN — review (only `PENDING`, non-`BLOCK` reports). → 200 `ReviewRes
 
 **Review outcomes (explicit):**
 - `UPHELD` → reported user permanently `SUSPENDED`.
-- `NOT_UPHELD` → **restoration recompute, not a stored snapshot**: the change to `ACTIVE`/`QUEUED`/`SOFT_PAUSED` is applied **only if** the user's status is still `SHADOW_BANNED` at review time; the restored status is ratio-aware (women → `ACTIVE`; men → per `Admission & queue rules`). If the user was re-suspended or otherwise moved in between, the intervening status wins and restoration is a no-op. (A stored `status_before_shadow_ban` field was considered and rejected — it goes stale across intervening moderation actions.)
+- `NOT_UPHELD` → **restoration recompute, not a stored snapshot**: the change to `ACTIVE`/`QUEUED` is applied **only if** the user's status is still `SHADOW_BANNED` at review time; the restored status is ratio-aware (women → `ACTIVE`; men → per `Admission & queue rules`). If the user was re-suspended or otherwise moved in between, the intervening status wins and restoration is a no-op. (A stored `status_before_shadow_ban` field was considered and rejected — it goes stale across intervening moderation actions.)
 - **False-reporter rule:** reporter with ≥ 3 `NOT_UPHELD` outcomes across their reviews → also moved to `SUSPENDED` (`BLOCK` reports never count).
 
 **Response 200**
@@ -534,7 +533,7 @@ DEV / ADMIN. Immediate `status=SUSPENDED` (publishes `UserSuspended`). → 200 `
 | 422 | `VALIDATION_ERROR` |
 
 ### `POST /users/{userId}/reactivate`
-DEV / ADMIN. Reverse a suspend → restoration recompute (§ Reporting): ratio-aware — a man returns to `ACTIVE`/`QUEUED`/`SOFT_PAUSED` per the gate. Publishes `UserReactivated`. → 200 `UserStatusResponse`.
+DEV / ADMIN. Reverse a suspend → restoration recompute (§ Reporting): ratio-aware — a man returns to `ACTIVE`/`QUEUED` per the gate. Publishes `UserReactivated`. → 200 `UserStatusResponse`.
 
 | Status | Code |
 |---|---|

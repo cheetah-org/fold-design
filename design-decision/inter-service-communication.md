@@ -34,7 +34,7 @@ The core-flow docs name *services*; the backend implements them as *modules* in 
 | Notification Service | `notifications` | Push delivery via external FCM; email/SMS later. |
 | Ratio Service | `ratio` **(new module)** | Gender-ratio gate + waiting queue from `reg-flow`. **Decision: dedicated `ratio` module** — sync admission calls from `users` (during `POST /users`), async queue events outward. |
 | *(not in flows)* | `discovery` | Feeds the woman's deck; owns the event-fed candidate pool, see §7.2. |
-| *(not in flows)* | `commons` | Shared DTO contracts only — payloads for both sync returns and event records. |
+| *(not in flows)* | `commons` | Shared kernel — sync client **interfaces**, DTO contracts for both sync returns and event records, typed exceptions + `ErrorCode` registry, error/paged envelopes, and `commons.security` (the folded Auth Lib). Depends on nothing; see `api-design/commons.md`. |
 | Database | Single Postgres | One datasource; each module owns its own tables; cross-module references are plain IDs. |
 | Firebase | External | All-Firebase for external services: **Firebase Auth** (Google sign-in), **FCM** (push), **Firebase Storage** (photos). Out of module boundaries. |
 
@@ -89,7 +89,7 @@ sequenceDiagram
             loop Every ratio check cycle
                 Ratio -->> UserSvc: AdmittedFromQueue (ASYNC event)
                 UserSvc ->> DB: Update USER status -> ACTIVE
-                Ratio -->> Notif: QueueStatusChanged (ASYNC event)
+                Ratio -->> Notif: AdmittedFromQueue (same event, fan-out)
                 Notif -->> Client: Queue update push (FCM)
             end
         end
@@ -103,7 +103,7 @@ sequenceDiagram
 |---|---|---|---|---|---|
 | R1 | UserSvc → Ratio | Check gender ratio during `POST /users` | **SYNC** | In-process client-interface call (`RatioClient.evaluateGenderRatio(city, gender)`) into the `ratio` module | HTTP client-interface |
 | R2 | Ratio → UserSvc | Admit from queue | **ASYNC** | Domain event `AdmittedFromQueue` → users listener flips account to `ACTIVE` | Broker + outbox → listener |
-| R3 | Ratio → Client | Queue update notification | **ASYNC** | Domain event `QueueStatusChanged` → `notifications` → FCM | Broker → `notifications` → FCM |
+| R3 | Ratio → Client | Admission push ("You're in") | **ASYNC** | Domain event `AdmittedFromQueue` → `notifications` → FCM | Broker → `notifications` → FCM |
 | — | Client → Firebase | OAuth sign-in | EXTERNAL | Firebase Auth (Google) | n/a (external) |
 | — | UserSvc → DB | User create / status update | DB | `users` module writes its own row (own tables, rule 7); auth never writes `USER` | — |
 
@@ -232,7 +232,7 @@ Every inter-service interaction from the four flows, consolidated.
 |---|---|---|---|---|---|---|
 | Check gender ratio | users → Ratio | reg | **SYNC** | users cannot proceed with onboarding without the admission verdict | Client-interface in-process call into the `ratio` module | HTTP client-interface |
 | Admit from queue | Ratio → Auth | reg | **ASYNC** | Background admission, no blocking answer | `AdmittedFromQueue` event → listener flips user active | Broker + outbox |
-| Queue update notification | Ratio → Client | reg | **ASYNC** | Announcement, others react | `QueueStatusChanged` event → `notifications` → FCM | Broker → FCM |
+| Admission push ("You're in") | Ratio → Client | reg | **ASYNC** | Announcement, others react | `AdmittedFromQueue` event → `notifications` → FCM | Broker → FCM |
 | Feed the eligible pool | users/profile → matching | like & match | **ASYNC** | High-frequency, staleness-tolerant | Event-fed projection | Broker → projection |
 | New-like push | Matching → Notif | like & match | **ASYNC** | Reaction to `LikeReceived` | Event → `notifications` → FCM | Broker → FCM |
 | Like details + woman's profile | Matching → users/profile | like & match | **SYNC** | Man's action needs the profile now | Client-interface `UserClient`/`ProfileClient` | HTTP client-interface |
@@ -246,17 +246,17 @@ Every inter-service interaction from the four flows, consolidated.
 
 ## 6. Client-interface swap plan
 
-- Interfaces are **owned by the caller**, defined in the caller's `internal/client/` package, and implemented today by an in-process adapter that calls the producer module's **public API**.
+- Interfaces live in **`commons`** (`commons.client.<module>.<X>Client` — pure interfaces referencing only commons types); the **in-process impl bean lives in the producer module** (`<X>InProcessClient implements <X>Client`, calls the producer's own public API, exposed via `@Bean`). Consumers inject the commons interface — Spring DI does the binding; no consumer ever imports a producer.
   ```
-  matching/internal/client/UserClient            (interface — matching owns it)
-  matching/internal/client/InProcessUserClient   (today: userService.getX(...) plain method call)
+  commons/client/users/UserClient.java            (interface — commons owns it)
+  users/InProcessUserClient.java                  (impl bean — producer owns it, calls its own API)
   ```
-- On extraction, add one new implementation behind the same interface:
+- On extraction, add the HTTP implementation **in commons** (safe there — real HTTP needs no producer import) and rebind via config:
   ```
-  matching/internal/client/HttpUserClient        (later: REST call to users service)
+  commons/client/users/HttpUserClient.java        (later: REST call to users service)
   ```
-  Swap via Spring profile/config. **Callers never change.**
-- Apply the interface (not a direct service-class import) to modules likely to be extracted or called at high frequency (`discovery`, `matching`, and friends of `users`). Writing a dialogue DTO to `commons` first is not required but is where the contracts live.
+  Swap via Spring profile/config. **Callers never change.** Why impl-in-commons is banned today: it would import the producer's API → `commons → producer`; every module already imports commons, so that closes a Modulith-verified cycle. (Supersedes the earlier "caller-owned interfaces in `internal/client/`" arrangement — `api-design/commons.md` is authoritative.)
+- Apply the interface (not a direct service-class import) to modules likely to be extracted or called at high frequency (`discovery`, `matching`, and friends of `users`). All dialogue DTOs live in `commons` — the contracts' single home.
 - Async events need no caller change either: the publish call stays identical and the Modulith outbox externalizes it to a broker when the modules are split.
 
 ---

@@ -33,4 +33,5 @@ Each service doc's rate-limit table lists only endpoint-specific numbers; the he
 - `auth.md` §9.1
 - `users` (`user.md`) — §Rate limits table (review fix: pointer previously cited a nonexistent §"Conventions")
 - `matching` (`matching.md`) — §Rate limits table
+- `ratio` (`ratio.md`) / `analytics` (`analytics.md`) — cross-cutting placeholder only (no per-endpoint tables)
 - `notifications.md` §"Rate limits"

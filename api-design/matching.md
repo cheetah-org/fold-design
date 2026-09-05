@@ -1,8 +1,8 @@
 # Matching Service — API
 
-Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
+Base URL: `https://api.wiingman.in/matching/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `POST https://api.wiingman.in/matching/api/v1/users/{targetId}/likes`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
-**Module:** `matching` in the Spring Boot modulith. Owns `LIKE` and `MATCH` (ER) — likes, accept/pass, matches, unmatch. **The woman's discovery feed/deck is NOT here** — the `discovery` module owns it (inter-service-communication.md §7 (2)); its endpoints get their own doc. Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
+**Module:** `matching` in the Spring Boot modulith. Owns `LIKE`, `MATCH`, and the discovery deck (`FEED_CURSOR` + eligible-men pool — the `discovery` half per inter-service-communication.md §7 (2) is covered by **this** service's API surface; deck endpoints are specced in §Discovery feed below — the ranking/selection algorithm is a build-time decision, deliberately out of this contract). Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
 
 **Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Every endpoint requires a valid Bearer token.**
 
@@ -24,7 +24,6 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 | Seen/unread | **None** on likes (per decision). The man learns of a like via the `LIKE` push (notifications module); the inbox is a plain paged list. |
 | Match | One `ACTIVE` match per pair. Accept creates it; `MatchCreated` → `messaging` opens the conversation (its id backfills onto the match **asynchronously** — `conversation_id` may be `null` briefly). |
 | Unmatch | Either party, any time. `MatchDeleted` → `messaging` purges the thread; the pair enters the 30-day cooldown. |
-| Soft-paused men | His inbox stays visible, but accept → `409 PAIR_INELIGIBLE` while he (or she) is not `ACTIVE`. |
 
 **Status enums:** `LIKE`: `PENDING | ACCEPTED | PASSED | EXPIRED` *(ER gains `EXPIRED` — alignment note)* · `MATCH`: `ACTIVE | UNMATCHED`.
 
@@ -36,6 +35,8 @@ Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC �
 |---|---|---|
 | `POST /users/{targetId}/likes` (female caller) | ✅ | ✅ |
 | Male caller on like-creation (any role) | ❌ 403 | ❌ 403 |
+| `GET /users/{userId}/feed` — deck (female caller, owner) | ✅ | ✅ |
+| Male caller on deck (any role) | ❌ 403 | ❌ 403 |
 | Own inbox / accept / pass / matches / unmatch | ✅ owner | ✅ |
 | Same on another user's path | ❌ 403 | ✅ |
 
@@ -126,6 +127,27 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
 { "items": [], "page": 0, "size": 20, "total": 0 }
 ```
 
+`FeedPageDto` — one deck page (cursor-based, not offset-paged)
+
+```json
+{
+  "items": [
+    {
+      "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
+      "name": "Rohan",
+      "age": 28,
+      "gender": "MALE",
+      "city": "Bangalore",
+      "bio": "I make coffee",
+      "description": "Looking to meet someone older.",
+      "preferences": ["coffee"],
+      "photos": []
+    }
+  ],
+  "next_cursor": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d"
+}
+```
+
 ---
 
 ## Likes
@@ -197,6 +219,54 @@ Unmatch — either party (must be a member). Sets `UNMATCHED` + `unmatched_by`/`
 
 ---
 
+## Discovery feed (deck)
+
+**Women only. Men cannot browse** — product rule, enforced server-side (business rule, no role bypass). Cards are served from the **event-fed eligible-men pool** (inter-service-communication.md L1): men who are `ACTIVE`, **strictly younger** than the caller, not blocked either direction, and not already liked/passed by her. The deck is algorithm-agnostic — cards carry no scores, no reasons, no filters in V1.
+
+### `GET /users/{userId}/feed`
+The woman's deck. Owner check + female-only gate. Cursor-based pagination via `FEED_CURSOR` (server-tracked): a call with no `cursor` continues from the server-stored `last_seen_profile_id` and **advances** it; passing `cursor` re-reads from that point (re-scroll) without advancing.
+
+**Query params:** `?limit=` (default 20, max 50) · `?cursor=` (optional; a card id from a previous `next_cursor`)
+
+**Response 200 — `FeedPageDto`**
+```json
+{
+  "items": [
+    {
+      "id": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d",
+      "name": "Rohan",
+      "age": 28,
+      "gender": "MALE",
+      "city": "Bangalore",
+      "bio": "I make coffee",
+      "description": "Looking to meet someone older.",
+      "preferences": ["coffee"],
+      "photos": []
+    }
+  ],
+  "next_cursor": "7a2b9c1d-3e4f-4a5b-8c6d-9e0f1a2b3c4d"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `items` | `PublicUserDto[]` | masked cards, no duplicates within a page; like/pass is **not** done here — cards link out to the matching actions (`POST /users/{targetId}/likes`) |
+| `next_cursor` | string\|null | last card id of the page; `null` = deck exhausted (refill arrives via pool events) |
+
+**Side effect:** each rendered card emits `ProfileViewed { viewer_id, profile_id, source: "DECK" }` → `analytics` (powers "X women viewed your profile today"; profile-open views are emitted by the `users` module with `source: "PROFILE"`).
+
+**Like / pass from a card:** the client calls the matching endpoints directly (`POST /users/{targetId}/likes`, §Likes) — the deck has no embedded action endpoints, and a liked/passed card never reappears (matching state excludes it from the pool view).
+
+**Algorithm:** ranking/selection inside the pool is a build-time decision (design-doc "TBD") — this contract is deliberately independent of it.
+
+| Status | Code |
+|---|---|
+| 403 | `ONBOARDING_INCOMPLETE` (onb=false) · `FORBIDDEN` — male caller (any role) or not owner |
+| 404 | `NOT_FOUND` — user missing |
+| 422 | `VALIDATION_ERROR` — bad `limit`/`cursor` |
+
+---
+
 ## Rate limits
 
 Mechanism, headers, envelope: `shared/rate-limits.md`. Per-endpoint values:
@@ -204,6 +274,7 @@ Mechanism, headers, envelope: `shared/rate-limits.md`. Per-endpoint values:
 | Endpoint | Limit | Scope | Window |
 |---|---|---|---|
 | `POST .../likes` | 60 | per user | 1 min |
+| `GET .../feed` | 60 | per user | 1 min |
 | `GET .../likes` · `GET .../matches` | 120 | per user | 1 min |
 | accept · pass | 60 | per user | 1 min |
 | `DELETE .../matches/{id}` | 30 | per user | 1 min |
@@ -229,9 +300,11 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 | `LikeReceived` | `{ like_id, liker_id, liked_id }` | `notifications` (push), `analytics` |
 | `MatchCreated` | `{ match_id, woman_id, man_id }` | `messaging` (open conversation), `notifications` |
 | `MatchDeleted` | `{ match_id, unmatched_by }` | `messaging` (purge thread), `notifications` |
+| `ProfileViewed` | `{ viewer_id, profile_id, source: DECK\|PROFILE }` | matching (deck, §Discovery feed) / users (profile open) → `analytics` |
 
 ### Cross-module notes
 - **Profile reads:** inbox/match cards embed `PublicUserDto` via the `users` module's `UserClient` (sync, in-process — inter-service-communication.md L3). Masking/mirrored-404 semantics owned there.
-- **Eligibility data:** gender/dob for the business rules come from the same client-interface read; never from client input.
-- **ER alignment:** `LIKE.status` gains `EXPIRED`; `FEED_CURSOR` belongs to the `discovery` doc, not here.
-- **Deferred (premium):** spotlight boost, advanced feed filters, like-delivery insights — future contract additions; the like/match model above doesn't preclude them.
+- **Eligibility pool:** the deck is served from the event-fed pool (inter-service-communication.md L1) — `UserRegistered`/`UserDeactivated`/`ProfileUpdated`/`PhotoChanged` listeners maintain it; never per-card sync calls.
+- **View events:** deck cards emit `ProfileViewed(source=DECK)` per rendered card; the `users` module emits `source=PROFILE` on profile open — `analytics` aggregates both for "X women viewed you today" and the weekly summary.
+- **ER alignment:** `LIKE.status` gains `EXPIRED`; `FEED_CURSOR` (server-tracked cursor, §Discovery feed) is owned by this module's discovery half; `PROFILE_VIEW_EVENT.source` gains `DECK`.
+- **Deferred (premium):** spotlight boost, advanced feed filters, like-delivery insights — future contract additions; the like/match/deck model above doesn't preclude them.

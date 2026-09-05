@@ -1,10 +1,10 @@
 # Auth Service — API Design
 
-Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
+Base URL: `https://api.wiingman.in/auth/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `GET https://api.wiingman.in/auth/api/v1/auth/me`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
 **Module:** `auth` inside the Spring Boot modulith. Owns `AUTH_CREDENTIAL` and all session/token state. It verifies Google ID tokens, issues our access + refresh tokens, and exposes our public keys. **It never owns `USER`** — profile/onboarding rows live in the `users` module (`api-design/user.md`), and `UserClient` is how other modules resolve identities.
 
-**Verify on every request, elsewhere:** the shared **Auth Lib** (used by all modules) statelessly validates our JWT against `GET /.well-known/jwks.json`. Auth Service itself is only called on the login/refresh/logout/jwks paths.
+**Verify on every request, elsewhere:** JWT validation lives in the shared kernel as **`commons.security`** (the former Auth Lib, folded into `commons` — see `commons.md` §security): stateless RS256 verification against `GET /.well-known/jwks.json` on every module. Auth Service itself is only called on the login/refresh/logout/jwks paths.
 
 ### Responsibilities
 
@@ -325,7 +325,7 @@ Omitted scenarios resolve to: DB/verifier infrastructure failure → `503 TEMPOR
 
 **Purpose:** Publish the RSA public keys that verify our JWTs. Auth Lib fetches (and caches) these to validate access tokens **without** calling Auth Service.
 
-**Method + path:** `GET /.well-known/jwks.json`
+**Method + path:** `GET /.well-known/jwks.json` (public path via the gateway: `/auth/.well-known/jwks.json`)
 
 **Auth requirement:** none.
 

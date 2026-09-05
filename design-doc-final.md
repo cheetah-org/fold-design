@@ -30,7 +30,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 - At any point, the number of active women must be greater than or equal to the number of active men
 - Enforced at city level (Bangalore for V1)
 - If a man tries to register when counts are equal, he enters a waiting queue
-- If ratio tips because women leave, new male registrations are paused and the most recently admitted men are soft-paused — notified, not deleted
+- If ratio tips because women leave, new male registrations are paused — notified, not deleted
 - Active conversations are never interrupted by ratio enforcement
 
 ### 3. Women Browse, Men Receive

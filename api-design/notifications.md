@@ -1,6 +1,6 @@
 # Notification Service — API
 
-Base URL: `/api/v1` · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
+Base URL: `https://api.wiingman.in/notifications/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `POST https://api.wiingman.in/notifications/api/v1/users/{userId}/tokens`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
 **Module:** `notifications` in the Spring Boot modulith. Owns the inbox (`NOTIFICATION`), the device/FCM-token registry, and per-user preferences. **Delivery channels:** push via **FCM** (`firebase-admin`) and email via **`JavaMailSender`** (spring-boot-starter-mail, plain SMTP credentials). Dispatch is internal (event-driven workers); this document specs the **client-facing REST surface** plus the type↔channel contract.
 
@@ -27,7 +27,7 @@ A notification **event creates one `NOTIFICATION` row** (appears in the inbox) a
 | `LIKE` | a woman liked him (see Assumption below) | ✅ | — | ✅ | high — immediate |
 | `MATCH` | mutual match, chat opened | ✅ | — | ✅ | high — immediate |
 | `EXPIRY` | conversation expiring ("made plans yet?") | ✅ | ✅ | ✅ | high — T−2 h before last message expiry |
-| `QUEUE_UPDATE` | queue rank change / "You're in" | ✅ | — | ✅ | medium — on event |
+| `QUEUE_UPDATE` | admission push — "You're in" (from `AdmittedFromQueue`) | ✅ | — | ✅ | medium — on event |
 | `WEEKLY_SUMMARY` | profile view stats ("viewed Y times this week") | — | ✅ | ✅ | low — weekly batch |
 | `VIEW` | anonymous daily count ("X women viewed you today") | ✅ | — | ✅ | low — daily |
 

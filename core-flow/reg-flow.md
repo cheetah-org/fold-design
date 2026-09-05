@@ -31,8 +31,8 @@ sequenceDiagram
                 Ratio ->> Ratio: Check ratio
                 Ratio -->> UserSvc: AdmittedFromQueue (ASYNC event)
                 UserSvc ->> DB: Update USER status -> ACTIVE
-                Ratio -->> Notif: QueueStatusChanged (ASYNC)
-                Notif -->> Client: Queue update push
+                Ratio -->> Notif: AdmittedFromQueue (same event, fan-out)
+                Notif -->> Client: "You're in" push
             end
         end
         UserSvc -->> Client: 201 created (user + queue position)
