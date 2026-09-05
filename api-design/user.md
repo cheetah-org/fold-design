@@ -30,6 +30,8 @@ Base URL: `https://api.wiingman.in/users/api/v1` — gateway convention `{baseUR
 
 **DTO rules:** this service **never exposes `email`** — it is owned by the Auth Service (`AUTH_CREDENTIAL`, surfaced via `GET /auth/me`). Full `UserDto` exposes `dob` only to self/DEV/ADMIN; public views expose only computed `age`. `priority`, `notes`, `reviewed_by` are moderation-internal.
 
+**Location model:** user provides a location via a places API (OpenStreetMap/Google Places). Backend stores `location_name` (display string, e.g. "BTM Layout, Bangalore"), `latitude`, and `longitude`. Region (e.g. "Bangalore metro") is derived server-side from the coordinates for ratio and analytics aggregation. `PublicUserDto` exposes only `location_name` — coordinates are never shared with other users.
+
 **Limits:** max 6 photos · `bio` ≤ 500 · `description` ≤ 2000 · `preferences` ≤ 20 entries · age gate 21+ · reports ≤ 5/reporter/day · pagination default `page=0, size=20`. **Rate limiting:** cross-cutting, handled centrally later — no per-endpoint limits in this doc.
 
 **Auth failures (global):** any endpoint requiring a Bearer token returns the shared Auth Lib set (`auth.md` §2) — `401 TOKEN_MISSING` / `TOKEN_MALFORMED` / `TOKEN_EXPIRED` / `TOKEN_INVALID_SIGNATURE` / `TOKEN_INVALID_AUDIENCE` / `TOKEN_UNKNOWN_KID`, or `429 TOO_MANY_REQUESTS`. These are not repeated in per-endpoint tables below.
@@ -44,9 +46,9 @@ Canonical envelope (shared across all modules — see `auth.md` §2). `field_err
 {
   "error": {
     "code": "VALIDATION_ERROR",
-    "message": "city is required",
+    "message": "location is required",
     "traceId": "8f2c1a3d-4b5e-4c6f-9a0d-1e2f3a4b5c6d",
-    "field_errors": [{ "field": "city", "message": "required" }]
+    "field_errors": [{ "field": "location.name", "message": "required" }]
   }
 }
 ```
@@ -58,7 +60,7 @@ Canonical envelope (shared across all modules — see `auth.md` §2). `field_err
 Product invariants that drive registration, the admission endpoint, and reactivation:
 
 - **Who queues:** men only. Women are always admitted immediately (the product keeps `active_women ≥ active_men`).
-- **Ratio measured at:** city level (`RATIO_STATE.active_women` vs `active_men`, Bangalore for V1), based on counted `ACTIVE` users. `DEACTIVATED`, `SUSPENDED`, `SHADOW_BANNED`, and `QUEUED` users are **not** counted as active for either side.
+- **Ratio measured at:** region level (`RATIO_STATE.active_women` vs `active_men`, Bangalore metro for V1). Region is derived server-side from the user's geolocation coordinates. `DEACTIVATED`, `SUSPENDED`, `SHADOW_BANNED`, and `QUEUED` users are **not** counted as active for either side.
 - **Gate:** `computed_open = active_women >= active_men` — computed by `ratio` (which holds any manual override); never a stored field (`admission_open` dropped from `RATIO_STATE`).
   - Woman registering → `ACTIVE`.
   - Man registering + gate open → `ACTIVE`.
@@ -80,7 +82,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
   "gender": "MALE",
   "dob": "1998-09-02",
   "age": 28,
-  "city": "Bangalore",
+  "location_name": "BTM Layout, Bangalore",
   "status": "QUEUED",
   "created_at": "2026-08-29T10:00:00Z"
 }
@@ -92,7 +94,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
   "name": "Rohan",
   "age": 28,
   "gender": "MALE",
-  "city": "Bangalore",
+  "location_name": "BTM Layout, Bangalore",
   "bio": "I make coffee",
   "description": "Looking to meet someone older.",
   "preferences": ["coffee", "live music"],
@@ -190,7 +192,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 ## Register
 
 ### `POST /users`
-**Onboarding — auth's identity becomes a `USER`.** Completes the two-step bootstrap: Auth upserts `AUTH_CREDENTIAL` (login) → this endpoint creates the `USER` + empty `PROFILE` linked to the credential via `credential_id` (plain-ID reference, modulith rule 7). Gender/city drive ratio admission (`Admission & queue rules`) → 201 `status` `ACTIVE` or `QUEUED` + `queue`. After this call the client runs `POST /auth/refresh` once so subsequent access tokens carry the new `oid` (`auth.md` §3/Appendix A).
+**Onboarding — auth's identity becomes a `USER`.** Completes the two-step bootstrap: Auth upserts `AUTH_CREDENTIAL` (login) → this endpoint creates the `USER` + empty `PROFILE` linked to the credential via `credential_id` (plain-ID reference, modulith rule 7). Gender/location drive ratio admission (`Admission & queue rules`) → 201 `status` `ACTIVE` or `QUEUED` + `queue`. After this call the client runs `POST /auth/refresh` once so subsequent access tokens carry the new `oid` (`auth.md` §3/Appendix A).
 
 **Re-registration after self-deactivation (review fix):** a `DEACTIVATED` credential signing in again gets `onboarded=false` from auth (`auth.md` §3) and may call `POST /users` to create a **fresh** `USER` row — the deactivated row is retained for audit, one live row per credential. This closes the previous dead-end where `DELETE /users/{id}` was irreversible.
 
@@ -201,7 +203,11 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 {
   "name": "Rohan",
   "gender": "MALE",
-  "city": "Bangalore",
+  "location": {
+    "name": "BTM Layout, Bangalore",
+    "latitude": 12.9166,
+    "longitude": 77.6101
+  },
   "dob": "1998-09-02"
 }
 ```
@@ -210,7 +216,9 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 |---|---|---|---|
 | `name` | string | ✅ | from the Google profile (the ID token carries `name`; our access token doesn't, so the client passes it here); ≤ 64 chars |
 | `gender` | `FEMALE` \| `MALE` | ✅ | drives ratio admission; immutable later |
-| `city` | string | ✅ | V1: `Bangalore` |
+| `location.name` | string | ✅ | display name from places API (e.g. "BTM Layout, Bangalore"); ≤ 128 chars |
+| `location.latitude` | double | ✅ | WGS 84 latitude; server derives region for ratio |
+| `location.longitude` | double | ✅ | WGS 84 longitude |
 | `dob` | date | ✅ | **always required** — Google/Firebase ID tokens never carry DOB (review fix), so the short form collects it; 21+ gate enforced server-side |
 
 > **Transport note (review fix):** `name`/`dob` were previously assumed to arrive "from Google" with no transport. Reality: the Google ID token carries `name` + `email` but **never** `dob` (`auth.md` §3). `email` stays auth-owned; `name` + `dob` are collected by the short form and transported here.
@@ -224,7 +232,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
     "gender": "MALE",
     "dob": "1998-09-02",
     "age": 28,
-    "city": "Bangalore",
+    "location_name": "BTM Layout, Bangalore",
     "status": "QUEUED",
     "created_at": "2026-08-29T10:00:00Z"
   },
@@ -255,7 +263,9 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
     "gender": "MALE",
     "dob": "1998-09-02",
     "age": 28,
-    "city": "Bangalore",
+    "location_name": "BTM Layout, Bangalore",
+    "latitude": 12.9166,
+    "longitude": 77.6101,
     "status": "QUEUED",
     "created_at": "2026-08-29T10:00:00Z"
   },
@@ -272,11 +282,17 @@ Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `Pub
 | 404 | `USER_NOT_VISIBLE` — blocked (either direction), `SUSPENDED`/`SHADOW_BANNED`/`DEACTIVATED`/`QUEUED`, or no row |
 
 ### `PATCH /users/{userId}`
-Self / DEV / ADMIN. Only `city` mutable (`gender`/`dob`/`name` immutable — Google-sourced / ratio-governing). → 200 `UserDto`.
+Self / DEV / ADMIN. Only `location` mutable (`gender`/`dob`/`name` immutable — Google-sourced / ratio-governing). Location change triggers region re-derivation and ratio re-evaluation. → 200 `UserDto`.
 
 **Request**
 ```json
-{ "city": "Delhi" }
+{
+  "location": {
+    "name": "Whitefield, Bangalore",
+    "latitude": 12.9698,
+    "longitude": 77.7500
+  }
+}
 ```
 
 | Status | Code |

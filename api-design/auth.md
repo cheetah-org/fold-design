@@ -401,7 +401,7 @@ Multiple `kid`s = rotation overlap (§9.3). Consumers **must** pick by `kid`, ne
 
 ```json
 {
-  "sub": "3f8c2a11-5b6d-4c7e-9f0a-b1c2d3e4f5a6b",
+  "sub": "3f8c2a11-5b6d-4c7e-9f0a-b1c2d3e4f5a6",
   "oid": "9f3a1c4e-2b7d-4a81-9c5e-8d2f0a6b3c11",
   "email": "rohan@gmail.com",
   "onboarded": true,
@@ -542,7 +542,7 @@ sequenceDiagram
     DB-->>A: credential created — no USER yet
     A->>DB: Create REFRESH_SESSION + REFRESH_TOKEN (hash)
     A-->>C: 200 {access_token, refresh_token, onboarded:false, user:null}
-    C->>U: POST /users {name, gender, city, dob} (short form, users module)
+    C->>U: POST /users {name, gender, location, dob} (short form, users module)
     U-->>C: 201 user created
     C->>A: POST /auth/refresh (rotate -> access token now carries oid)
     A-->>C: 200 {access_token+oid, new refresh_token}

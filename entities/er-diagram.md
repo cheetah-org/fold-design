@@ -6,7 +6,7 @@ erDiagram
     AUTH_CREDENTIAL {
         string id PK
         string google_sub UK "Google OAuth sub"
-        string user_id FK "auth-side mirror of USER.credential_id"
+        string user_id "plain-ID ref to USER; auth-side mirror of USER.credential_id"
         string email
         datetime created_at
     }
@@ -15,7 +15,7 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "rank_of(onboarded_time); currently = onboarded_time"
+        int rank "FIFO position, monotonic with onboarding time"
         datetime admitted_at
         datetime created_at
     }
@@ -29,7 +29,7 @@ erDiagram
     %% ============ WEST: ANALYTICS SERVICE ============
     RATIO_STATE {
         string id PK
-        string city
+        string region "derived from user geolocation (e.g. Bangalore metro)"
         int active_women
         int active_men
         datetime updated_at
@@ -44,7 +44,8 @@ erDiagram
     ENGAGEMENT_FACT {
         string id PK
         string bucket "hour | day"
-        string city
+        string region
+        datetime period_start
         int likes
         int matches
         int new_users
@@ -58,7 +59,9 @@ erDiagram
         string name "from Google profile (client-supplied at POST /users)"
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
-        string city
+        string location_name "display name from places API (e.g. BTM Layout, Bangalore)"
+        double latitude
+        double longitude
         enum status "ACTIVE | QUEUED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
@@ -80,8 +83,11 @@ erDiagram
         string reporter_id FK
         string reported_id FK
         enum category "HARASSMENT | FAKE_PROFILE | UNDERAGE | INAPPROPRIATE | BLOCK"
+        enum priority "HIGH | NORMAL"
         enum status "PENDING | NOT_UPHELD | UPHELD"
+        string notes "reporter notes, <= 2000 chars"
         string reviewed_by
+        datetime reviewed_at
         datetime created_at
     }
     BLOCK {
@@ -127,6 +133,8 @@ erDiagram
         string conversation_id FK
         string user_id FK
         boolean visible
+        string last_read_message_id "drives unread badge count"
+        datetime cleared_at "self-clear timestamp; distinct from visible (masking)"
     }
     MESSAGE {
         string id PK
@@ -141,21 +149,28 @@ erDiagram
     DEVICE_TOKEN {
         string id PK
         string user_id FK
+        string session_id "from token sid claim; SessionRevoked deletes by this"
+        string device_fingerprint "from token dfp claim; dedup + DEVICE_MISMATCH validation"
         string fcm_token
-        string platform
+        string platform "ios | android"
+        datetime created_at
         datetime last_seen_at
     }
     NOTIFICATION {
         string id PK
         string user_id FK
-        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY"
+        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        json channels "push | email — channels dispatched to"
         json payload
         enum status "PENDING | SENT | FAILED"
+        boolean read "inbox state; false until marked read"
         datetime created_at
+        datetime sent_at
     }
     NOTIFICATION_PREFERENCE {
         string user_id PK, FK
-        enum type
+        enum type PK "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        enum channel PK "push | email"
         boolean enabled
     }
 
@@ -213,7 +228,9 @@ erDiagram
         string name "from Google profile (client-supplied at POST /users)"
         enum gender "FEMALE | MALE"
         date dob "user-supplied (Google ID tokens carry no DOB)"
-        string city
+        string location_name "display name from places API (e.g. BTM Layout, Bangalore)"
+        double latitude
+        double longitude
         enum status "ACTIVE | QUEUED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
@@ -235,8 +252,11 @@ erDiagram
         string reporter_id FK
         string reported_id FK
         enum category "HARASSMENT | FAKE_PROFILE | UNDERAGE | INAPPROPRIATE | BLOCK"
+        enum priority "HIGH | NORMAL"
         enum status "PENDING | NOT_UPHELD | UPHELD"
+        string notes "reporter notes, <= 2000 chars"
         string reviewed_by
+        datetime reviewed_at
         datetime created_at
     }
     BLOCK {
@@ -271,7 +291,7 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "rank_of(onboarded_time); currently = onboarded_time"
+        int rank "FIFO position, monotonic with onboarding time"
         datetime admitted_at
         datetime created_at
     }
@@ -293,7 +313,6 @@ erDiagram
     %% Relationships
     USER ||--o{ ADMISSION_QUEUE : "queued (external)"
     USER ||--o{ RATIO_EVENT_LOG : "status event (external)"
-    RATIO_STATE ||--o{ ADMISSION_QUEUE : "drives admission (external, no FK)"
 ```
 
 # auth-service
@@ -306,7 +325,7 @@ erDiagram
     AUTH_CREDENTIAL {
         string id PK
         string google_sub UK "Google OAuth sub"
-        string user_id FK "auth-side mirror of USER.credential_id"
+        string user_id "plain-ID ref to USER; auth-side mirror of USER.credential_id"
         string email
         datetime created_at
     }
@@ -384,6 +403,8 @@ erDiagram
         string conversation_id FK
         string user_id FK
         boolean visible
+        string last_read_message_id "drives unread badge count"
+        datetime cleared_at "self-clear timestamp; distinct from visible (masking)"
     }
     MESSAGE {
         string id PK
@@ -420,21 +441,28 @@ erDiagram
     DEVICE_TOKEN {
         string id PK
         string user_id FK
+        string session_id "from token sid claim; SessionRevoked deletes by this"
+        string device_fingerprint "from token dfp claim; dedup + DEVICE_MISMATCH validation"
         string fcm_token
-        string platform
+        string platform "ios | android"
+        datetime created_at
         datetime last_seen_at
     }
     NOTIFICATION {
         string id PK
         string user_id FK
-        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY"
+        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        json channels "push | email — channels dispatched to"
         json payload
         enum status "PENDING | SENT | FAILED"
+        boolean read "inbox state; false until marked read"
         datetime created_at
+        datetime sent_at
     }
     NOTIFICATION_PREFERENCE {
         string user_id PK, FK
-        enum type
+        enum type PK "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        enum channel PK "push | email"
         boolean enabled
     }
 
@@ -458,7 +486,7 @@ erDiagram
     %% Owned entities
     RATIO_STATE {
         string id PK
-        string city
+        string region "derived from user geolocation (e.g. Bangalore metro)"
         int active_women
         int active_men
         datetime updated_at
@@ -473,7 +501,8 @@ erDiagram
     ENGAGEMENT_FACT {
         string id PK
         string bucket "hour | day"
-        string city
+        string region
+        datetime period_start
         int likes
         int matches
         int new_users

@@ -2,7 +2,7 @@
 
 Base URL: `https://api.wiingman.in/ratio/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `POST https://api.wiingman.in/ratio/api/v1/users/{userId}/admit`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
-**Module:** `ratio` in the Spring Boot modulith. Owns `ADMISSION_QUEUE` + `RATIO_EVENT_LOG` (ER). Reads `RATIO_STATE` via `AnalyticsClient.getRatioState(city)` (analytics-owned: `active_women`, `active_men`, per city). **Analytics exposes `active_women` / `active_men` only; ratio is the sole source of the open/closed decision (`computed_open`, `effective_open`).** This module is **mostly internal** — a gate, not a feature surface:
+**Module:** `ratio` in the Spring Boot modulith. Owns `ADMISSION_QUEUE` + `RATIO_EVENT_LOG` (ER). Reads `RATIO_STATE` via `AnalyticsClient.getRatioState(region)` (analytics-owned: `active_women`, `active_men`, per region). **Analytics exposes `active_women` / `active_men` only; ratio is the sole source of the open/closed decision (`computed_open`, `effective_open`).** This module is **mostly internal** — a gate, not a feature surface:
 
 - **No client-facing endpoints.** The mobile queue view is `GET /users/{userId}/admission` in `user.md` (composed from ratio data via client interface) — that doc stays the single client contract.
 - **Sync gate contract** (§Sync gate contract) called by the `users` module during `POST /users` — in-process client interface today, HTTP after extraction (inter-service-communication.md §6).
@@ -29,11 +29,11 @@ Client-visible rules live in `user.md` §Admission & queue rules; the mechanics 
 
 ## Sync gate contract
 
-Owned by the caller (`users` module) per inter-service-communication.md §6; in-process today (`RatioClient.evaluateGenderRatio(city, gender)`), the same DTOs become the HTTP shape after extraction.
+Owned by the caller (`users` module) per inter-service-communication.md §6; in-process today (`RatioClient.evaluateGenderRatio(region, gender)`), the same DTOs become the HTTP shape after extraction.
 
 **Request — `GateCheckRequest`**
 ```json
-{ "city": "Bangalore", "gender": "MALE" }
+{ "region": "Bangalore", "gender": "MALE" }
 ```
 
 **Response — `GateDecisionDto` (man, gate open or woman)**
@@ -109,13 +109,13 @@ Per-user `RATIO_EVENT_LOG` (ops debugging without DB access). `?type=&page=&size
 | 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 404 | `NOT_FOUND` — user missing |
 
-### `GET /cities/{city}/admission-gate`
+### `GET /regions/{region}/admission-gate`
 Effective gate view (override + computed). → 200 `GateDto`.
 
 **Response 200**
 ```json
 {
-  "city": "Bangalore",
+  "region": "Bangalore",
   "mode": "AUTO",
   "computed_open": true,
   "effective_open": true,
@@ -125,8 +125,8 @@ Effective gate view (override + computed). → 200 `GateDto`.
 }
 ```
 
-### `PUT /cities/{city}/admission-gate`
-Override the gate for a city. Body `{ "mode": "AUTO" | "OPEN" | "CLOSED" }` — `AUTO` clears any override. Idempotent (same mode → 200, no event). Changing to `OPEN`/`CLOSED` triggers an immediate evaluation pass (promotions flow as events).
+### `PUT /regions/{region}/admission-gate`
+Override the gate for a region. Body `{ "mode": "AUTO" | "OPEN" | "CLOSED" }` — `AUTO` clears any override. Idempotent (same mode → 200, no event). Changing to `OPEN`/`CLOSED` triggers an immediate evaluation pass (promotions flow as events).
 
 **Request**
 ```json
@@ -138,9 +138,9 @@ Override the gate for a city. Body `{ "mode": "AUTO" | "OPEN" | "CLOSED" }` — 
 | Status | Code (both gate routes) |
 |---|---|
 | 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
-| 422 | `VALIDATION_ERROR` — unknown city / bad `mode` |
+| 422 | `VALIDATION_ERROR` — unknown region / bad `mode` |
 
-> City as a resource (`/cities/{city}/...`) is the one non-user-first path in the API set — gate state is city-scoped, not user-scoped. V1 has exactly one city (`Bangalore`).
+> Region as a resource (`/regions/{region}/...`) is the one non-user-first path in the API set — gate state is region-scoped, not user-scoped. Region is derived server-side from user geolocation. V1 has exactly one region (`Bangalore`).
 
 ---
 
@@ -153,7 +153,7 @@ Rate limiting is a cross-cutting concern handled by shared infrastructure, not i
 ## Non-functional notes
 
 ### Concurrency & idempotency
-- **Single evaluation lock per city** — the 5-min sweep and event-triggered passes serialize on the city, so a promotion pass and an admin force-admit can't double-admit the same queue row (row-level conditional claim: admit only when `admitted_at IS NULL`).
+- **Single evaluation lock per region** — the 5-min sweep and event-triggered passes serialize on the region, so a promotion pass and an admin force-admit can't double-admit the same queue row (row-level conditional claim: admit only when `admitted_at IS NULL`).
 - `POST .../admit` — retried after a lost response is **not** safe to blindly repeat (admit twice is harmless — second gets `409 INVALID_STATE` after the flip lands — but callers should treat 409-after-202 as success-confirm).
 - `PUT .../admission-gate` — idempotent per mode.
 

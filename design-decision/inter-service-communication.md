@@ -33,7 +33,7 @@ The core-flow docs name *services*; the backend implements them as *modules* in 
 | Matching Service | `matching` | Swipes, likes, match records, match algorithm. |
 | Notification Service | `notifications` | Push delivery via external FCM; email/SMS later. |
 | Ratio Service | `ratio` **(new module)** | Gender-ratio gate + waiting queue from `reg-flow`. **Decision: dedicated `ratio` module** — sync admission calls from `users` (during `POST /users`), async queue events outward. |
-| *(not in flows)* | `discovery` | Feeds the woman's deck; owns the event-fed candidate pool, see §7.2. |
+| *(not in flows)* | `matching` (discovery half) | The woman's deck and event-fed candidate pool are part of `matching`, see §7.2. |
 | *(not in flows)* | `commons` | Shared kernel — sync client **interfaces**, DTO contracts for both sync returns and event records, typed exceptions + `ErrorCode` registry, error/paged envelopes, and `commons.security` (the folded Auth Lib). Depends on nothing; see `api-design/commons.md`. |
 | Database | Single Postgres | One datasource; each module owns its own tables; cross-module references are plain IDs. |
 | Firebase | External | All-Firebase for external services: **Firebase Auth** (Google sign-in), **FCM** (push), **Firebase Storage** (photos). Out of module boundaries. |
@@ -77,7 +77,7 @@ sequenceDiagram
     Auth ->> DB: Upsert AUTH_CREDENTIAL (google_sub, email)
     Auth -->> Client: access token + onboarded flag
     alt New user (no USER row yet)
-        Client ->> UserSvc: POST /users (name, gender, city, dob — dob always required)
+        Client ->> UserSvc: POST /users (name, gender, location, dob — dob always required)
         UserSvc ->> DB: Age gate check (21+, server-side)
         UserSvc ->> Ratio: Check gender ratio (SYNC via RatioClient)
         alt Woman OR man with ratio OK
@@ -101,7 +101,7 @@ sequenceDiagram
 
 | # | From → To | Interaction | Channel | Modulith implementation | After extraction |
 |---|---|---|---|---|---|
-| R1 | UserSvc → Ratio | Check gender ratio during `POST /users` | **SYNC** | In-process client-interface call (`RatioClient.evaluateGenderRatio(city, gender)`) into the `ratio` module | HTTP client-interface |
+| R1 | UserSvc → Ratio | Check gender ratio during `POST /users` | **SYNC** | In-process client-interface call (`RatioClient.evaluateGenderRatio(region, gender)`) into the `ratio` module | HTTP client-interface |
 | R2 | Ratio → UserSvc | Admit from queue | **ASYNC** | Domain event `AdmittedFromQueue` → users listener flips account to `ACTIVE` | Broker + outbox → listener |
 | R3 | Ratio → Client | Admission push ("You're in") | **ASYNC** | Domain event `AdmittedFromQueue` → `notifications` → FCM | Broker → `notifications` → FCM |
 | — | Client → Firebase | OAuth sign-in | EXTERNAL | Firebase Auth (Google) | n/a (external) |
@@ -148,9 +148,9 @@ sequenceDiagram
 |---|---|---|---|---|---|
 | L1 | users → matching (implied) | Keep the eligible-profiles pool fresh | **ASYNC** | Event-fed local projection: `UserRegistered`, `UserDeactivated`, `ProfileUpdated`, `PhotoChanged` listeners update the pool | Broker → projection |
 | L2 | Matching → Notif | New-like push to the man | **ASYNC** | Domain event `LikeReceived` → `notifications` → FCM | Broker → `notifications` → FCM |
-| L3 | Matching → users/profile (implied) | View like + woman's profile (`Get like and woman's profile`) | **SYNC** | Client-interface `UserClient`/`ProfileClient` reads (or maintained projection); never a DB join | HTTP client-interface |
+| L3 | Matching → users (implied) | View like + woman's profile (`Get like and woman's profile`) | **SYNC** | Client-interface `UserClient` reads (or maintained projection); never a DB join | HTTP client-interface |
 | L4 | Matching → Notif | Match notifications to both | **ASYNC** | Domain event `MatchCreated` → `notifications` → FCM | Broker → `notifications` → FCM |
-| — | Matching → DB | `Get profiles` / save like | DB | In the real codebase the deck is served by `discovery`, not `matching` — see §7.2 | — |
+| — | Matching → DB | `Get profiles` / save like | DB | The deck is served by `matching`'s discovery half (event-fed eligible-men pool) — see §7.2 | — |
 
 ### 4.3 Chat — `chat-flow`
 
@@ -231,11 +231,11 @@ Every inter-service interaction from the four flows, consolidated.
 | Interaction | From → To | Flow | Channel | Why | Modulith impl | After extraction |
 |---|---|---|---|---|---|---|
 | Check gender ratio | users → Ratio | reg | **SYNC** | users cannot proceed with onboarding without the admission verdict | Client-interface in-process call into the `ratio` module | HTTP client-interface |
-| Admit from queue | Ratio → Auth | reg | **ASYNC** | Background admission, no blocking answer | `AdmittedFromQueue` event → listener flips user active | Broker + outbox |
+| Admit from queue | Ratio → UserSvc | reg | **ASYNC** | Background admission, no blocking answer | `AdmittedFromQueue` event → listener flips user active | Broker + outbox |
 | Admission push ("You're in") | Ratio → Client | reg | **ASYNC** | Announcement, others react | `AdmittedFromQueue` event → `notifications` → FCM | Broker → FCM |
 | Feed the eligible pool | users/profile → matching | like & match | **ASYNC** | High-frequency, staleness-tolerant | Event-fed projection | Broker → projection |
 | New-like push | Matching → Notif | like & match | **ASYNC** | Reaction to `LikeReceived` | Event → `notifications` → FCM | Broker → FCM |
-| Like details + woman's profile | Matching → users/profile | like & match | **SYNC** | Man's action needs the profile now | Client-interface `UserClient`/`ProfileClient` | HTTP client-interface |
+| Like details + woman's profile | Matching → users | like & match | **SYNC** | Man's action needs the profile now | Client-interface `UserClient` | HTTP client-interface |
 | Match notifications | Matching → Notif | like & match | **ASYNC** | Reaction to `MatchCreated` | Event → `notifications` → FCM | Broker → FCM |
 | Message-expiry notification | Chat → Notif | chat | **ASYNC** | Scheduled announcement | `MessageExpiring` event → `notifications` → FCM | Broker → FCM |
 | Delete conversation on unmatch | Matching → Chat | unmatch | **ASYNC** | No blocking answer needed for the unmatch response | `MatchDeleted` event → `messaging` purges | Broker → `messaging` |
@@ -256,7 +256,7 @@ Every inter-service interaction from the four flows, consolidated.
   commons/client/users/HttpUserClient.java        (later: REST call to users service)
   ```
   Swap via Spring profile/config. **Callers never change.** Why impl-in-commons is banned today: it would import the producer's API → `commons → producer`; every module already imports commons, so that closes a Modulith-verified cycle. (Supersedes the earlier "caller-owned interfaces in `internal/client/`" arrangement — `api-design/commons.md` is authoritative.)
-- Apply the interface (not a direct service-class import) to modules likely to be extracted or called at high frequency (`discovery`, `matching`, and friends of `users`). All dialogue DTOs live in `commons` — the contracts' single home.
+- Apply the interface (not a direct service-class import) to modules likely to be extracted or called at high frequency (`matching`, and friends of `users`). All dialogue DTOs live in `commons` — the contracts' single home.
 - Async events need no caller change either: the publish call stays identical and the Modulith outbox externalizes it to a broker when the modules are split.
 
 ---
@@ -265,15 +265,15 @@ Every inter-service interaction from the four flows, consolidated.
 
 The flows above are faithful to the core-flow diagrams. Where the real backend differs, it's called out here — nothing was silently rewritten.
 
-1. **Auth creates the user (reg-flow) vs `users` owns `User`.** Onboarding is two steps: (a) the `auth` module verifies the Firebase ID token and upserts `AUTH_CREDENTIAL` against `google_sub`, returning an access token + an `onboarded` flag; (b) the client fills the short form with what Google does **not** provide (`name` comes from the Google profile, `gender`/`city` are always asked, and `dob` is **always required** — Google ID tokens never carry DOB, review fix) and calls `POST /users` **inside the `users` module** — the one place `USER` is written. `users` enforces the 21+ gate server-side, then runs the ratio admission via `RatioClient` (R1). The flow's old `Auth ->> DB: Create user` maps to that write. After a successful registration, `users` publishes `UserRegistered`, and discovery/matching/messaging/notifications seed their local projections from it — a fan-out the flow diagram doesn't show.
+1. **Auth creates the user (reg-flow) vs `users` owns `User`.** Onboarding is two steps: (a) the `auth` module verifies the Firebase ID token and upserts `AUTH_CREDENTIAL` against `google_sub`, returning an access token + an `onboarded` flag; (b) the client fills the short form with what Google does **not** provide (`name` comes from the Google profile, `gender`/`location` are always asked, and `dob` is **always required** — Google ID tokens never carry DOB, review fix) and calls `POST /users` **inside the `users` module** — the one place `USER` is written. `users` enforces the 21+ gate server-side, then runs the ratio admission via `RatioClient` (R1). The flow's old `Auth ->> DB: Create user` maps to that write. After a successful registration, `users` publishes `UserRegistered`, and matching/messaging/notifications seed their local projections from it — a fan-out the flow diagram doesn't show.
 
-2. **`Matching` serves the feed (like-match-flow) vs `discovery` owns the deck.** The woman's feed and the eligible-men pool belong to `discovery`; `matching` handles swipes/likes/match records. The pool is an event-fed projection (L1), not a per-request query. Deck cards are composed at the edge from `users` data (account + profile + photos, one module) via client-interface reads.
+2. **Discovery is part of `matching`.** The woman's feed and the eligible-men pool are owned by the `matching` module (its "discovery half" — the deck endpoint is `GET /users/{userId}/feed` in `matching.md` §Discovery feed). The pool is an event-fed projection (L1), not a per-request query. Deck cards are composed at the edge from `users` data (account + profile + photos, one module) via client-interface reads.
 
 3. **`Get like and woman's profile` is drawn as a DB read.** In the backend that detail view is built by reading `users`/`profile` through their public APIs (client-interface sync call or a maintained projection) — never a cross-module DB join.
 
 4. **Unmatch chat deletion is drawn as a direct call.** A `MatchDeleted` event (U1) is the recommended channel: `matching` announces, `messaging` purges; the unmatch response to the initiator must not block on message deletion.
 
-5. **Ratio Service is its own module — finalized.** The gender-ratio gate + waiting queue get a dedicated `ratio` module in the backend. The admission gate stays a **sync** client-interface call from auth (R1); queue admission and queue-update notifications are **async** events (R2/R3) with `notifications` doing the push. To land it: reserve the `com.fold.backend.ratio` package (public API + `internal/`), own its tables/entities, add an `@ApplicationModuleTest`, and wire `RatioClient` as an in-process adapter. This supersedes the earlier "TBD" call-out.
+5. **Ratio Service is its own module — finalized.** The gender-ratio gate + waiting queue get a dedicated `ratio` module in the backend. The admission gate stays a **sync** client-interface call from users (R1); queue admission and queue-update notifications are **async** events (R2/R3) with `notifications` doing the push. To land it: reserve the `com.fold.backend.ratio` package (public API + `internal/`), own its tables/entities, add an `@ApplicationModuleTest`, and wire `RatioClient` as an in-process adapter. This supersedes the earlier "TBD" call-out.
 
 6. **Naming differs.** `Chat Service` = `messaging` module. `Notification Service` = `notifications` module + external FCM/email/SMS delivery. `Database` = single shared Postgres with per-module tables (rule 7).
 

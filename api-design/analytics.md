@@ -1,6 +1,6 @@
 # Analytics Service — API
 
-Base URL: `https://api.wiingman.in/analytics/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `GET https://api.wiingman.in/analytics/api/v1/cities/{city}/ratio-state`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
+Base URL: `https://api.wiingman.in/analytics/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `GET https://api.wiingman.in/analytics/api/v1/regions/{region}/ratio-state`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
 **Module:** `analytics` in the Spring Boot modulith. Owns `RATIO_STATE` (raw gender counts only — no gate state; ratio owns the open/closed decision), `PROFILE_VIEW_EVENT`, `ENGAGEMENT_FACT` (ER). **No end-user surface** — an internal, event-fed module whose outputs are (a) the count projection ratio reads, (b) two scheduled announcements notifications renders, (c) an admin/ops-only read surface. Powers the product promises "X women viewed your profile today" (daily push) and the weekly summary email.
 
@@ -12,10 +12,10 @@ Base URL: `https://api.wiingman.in/analytics/api/v1` — gateway convention `{ba
 
 | Mechanic | Rule |
 |---|---|
-| Event-fed counters | per city, `active_women` / `active_men` move ±1 on consumed status events (§Consumed events). Only `ACTIVE` users are counted — matches `user.md` counted-as-active. |
-| Reconciliation | **hourly** job sync-calls `UserClient.getActiveGenderCounts(city)` (true counts from the users module) and overwrites `RATIO_STATE` — self-heals any drift from dropped/duplicated events. `POST /ratio-state/recompute` runs the same path on demand. |
-| Single writer | one reconciliation/count-update writer per city (lock) so event updates and reconciliation never interleave; counter updates commit in the same transaction as the consumed event. |
-| Shape | plain projection: `{ city, active_women, active_men, updated_at }`. No `admission_open` — gate decisions are ratio's (`computed_open`/`effective_open`). |
+| Event-fed counters | per region (derived from user geolocation), `active_women` / `active_men` move ±1 on consumed status events (§Consumed events). Only `ACTIVE` users are counted — matches `user.md` counted-as-active. |
+| Reconciliation | **hourly** job sync-calls `UserClient.getActiveGenderCounts(region)` (true counts from the users module) and overwrites `RATIO_STATE` — self-heals any drift from dropped/duplicated events. `POST /ratio-state/recompute` runs the same path on demand. |
+| Single writer | one reconciliation/count-update writer per region (lock) so event updates and reconciliation never interleave; counter updates commit in the same transaction as the consumed event. |
+| Shape | plain projection: `{ region, active_women, active_men, updated_at }`. No `admission_open` — gate decisions are ratio's (`computed_open`/`effective_open`). |
 
 ---
 
@@ -32,7 +32,7 @@ Base URL: `https://api.wiingman.in/analytics/api/v1` — gateway convention `{ba
 
 ## Engagement facts — `ENGAGEMENT_FACT`
 
-Consumes `LikeReceived` (likes), `MatchCreated` (matches), `UserRegistered` (new_users) into **hourly buckets** per city, rolled up to **day**; `ratio_snapshot` records the `RATIO_STATE` counts at bucket close. V1 consumer: admin dashboard endpoint only — nothing client-facing.
+Consumes `LikeReceived` (likes), `MatchCreated` (matches), `UserRegistered` (new_users) into **hourly buckets** per region, rolled up to **day**; `ratio_snapshot` records the `RATIO_STATE` counts at bucket close. V1 consumer: admin dashboard endpoint only — nothing client-facing.
 
 ---
 
@@ -42,7 +42,7 @@ Consumes `LikeReceived` (likes), `MatchCreated` (matches), `UserRegistered` (new
 
 | Method | Returns | Doc |
 |---|---|---|
-| `getRatioState(city)` | `RatioStateDto` | feeds ratio's gate evaluation; `ratio` never writes `RATIO_STATE` |
+| `getRatioState(region)` | `RatioStateDto` | feeds ratio's gate evaluation; `ratio` never writes `RATIO_STATE` |
 
 ---
 
@@ -67,7 +67,7 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 
 ```json
 {
-  "city": "Bangalore",
+  "region": "Bangalore",
   "active_women": 520,
   "active_men": 480,
   "updated_at": "2026-09-02T09:00:00Z"
@@ -91,24 +91,24 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 
 ## Admin surface (ops-only, `DEV`/`ADMIN`)
 
-### `GET /cities/{city}/ratio-state`
+### `GET /regions/{region}/ratio-state`
 → 200 `RatioStateDto`.
 
 | Status | Code |
 |---|---|
 | 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
-| 422 | `VALIDATION_ERROR` — unknown city |
+| 422 | `VALIDATION_ERROR` — unknown region |
 
-### `POST /cities/{city}/ratio-state/recompute`
-Force reconciliation: sync-call `UserClient.getActiveGenderCounts(city)`, overwrite `RATIO_STATE`. Idempotent. → 200 `RatioStateDto` (fresh counts).
+### `POST /regions/{region}/ratio-state/recompute`
+Force reconciliation: sync-call `UserClient.getActiveGenderCounts(region)`, overwrite `RATIO_STATE`. Idempotent. → 200 `RatioStateDto` (fresh counts).
 
 | Status | Code |
 |---|---|
 | 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
-| 422 | `VALIDATION_ERROR` — unknown city |
+| 422 | `VALIDATION_ERROR` — unknown region |
 | 503 | `TEMPORARY_ERROR` — users module unreachable; retry |
 
-### `GET /cities/{city}/engagement`
+### `GET /regions/{region}/engagement`
 Paged facts. `?bucket=hour|day&from=&to=&page=&size=` (default `bucket=day`, newest first) → 200 `PagedDto<EngagementFactDto>`.
 
 | Status | Code |
@@ -116,7 +116,7 @@ Paged facts. `?bucket=hour|day&from=&to=&page=&size=` (default `bucket=day`, new
 | 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 422 | `VALIDATION_ERROR` — bad `bucket`/range |
 
-> `/cities/{city}/...` is city-scoped like `ratio.md`'s gate — analytics state is per-city, not per-user. V1 has exactly one city (`Bangalore`).
+> `/regions/{region}/...` is region-scoped like `ratio.md`'s gate — analytics state is per-region, not per-user. Region is derived server-side from user geolocation. V1 has exactly one region (`Bangalore`).
 
 ---
 
@@ -137,8 +137,8 @@ Rate limiting is a cross-cutting concern handled by shared infrastructure, not i
 
 ## Cross-module notes
 
-- **`ratio`** reads counts via `AnalyticsClient.getRatioState(city)` — the only sync consumer; ratio never writes `RATIO_STATE` (sole decision-maker for the gate, `ratio.md`).
+- **`ratio`** reads counts via `AnalyticsClient.getRatioState(region)` — the only sync consumer; ratio never writes `RATIO_STATE` (sole decision-maker for the gate, `ratio.md`).
 - **`notifications`** renders the two announced events — it owns nothing analytical.
-- **`users`** is the source of truth for reconciliation counts (`UserClient.getActiveGenderCounts(city)` — added to the `commons.md` catalog).
+- **`users`** is the source of truth for reconciliation counts (`UserClient.getActiveGenderCounts(region)` — added to the `commons.md` catalog).
 - **Emitters:** `ProfileViewed` arrives from `matching` (deck renders, `matching.md` §Discovery feed) and `users` (profile opens, `user.md`).
-- **ER:** no changes — `PROFILE_VIEW_EVENT.source` already gains `DECK` (see `matching.md`), `RATIO_STATE` is already counts-only.
+- **ER synced:** `RATIO_STATE.region` (was `city`), `ENGAGEMENT_FACT.region` + `period_start` — all reflected in `entities/er-diagram.md`.

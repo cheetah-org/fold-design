@@ -54,7 +54,7 @@ Base URL: `https://api.wiingman.in/messaging/api/v1` — gateway convention `{ba
     "name": "Rohan",
     "age": 28,
     "gender": "MALE",
-    "city": "Bangalore",
+    "location_name": "BTM Layout, Bangalore",
     "bio": "I make coffee",
     "description": "Looking to meet someone older.",
     "preferences": ["coffee"],
@@ -194,8 +194,8 @@ All transactional, at-least-once (mechanism per `auth.md` §9.5); lifecycle hand
 
 Removed for now — chat flood/abuse controls will be defined together with the central cross-cutting rate-limiting mechanism (placeholder policy as in `ratio.md`/`analytics.md`).
 
-### ER additions (alignment note)
-`CONVERSATION_MEMBER` gains `last_read_message_id` (unread badges) and `cleared_at` (self-clear — distinct from `visible`, which masking flips, so a `BlockRemoved` restore doesn't resurrect a deliberately cleared thread).
+### ER synced
+`CONVERSATION_MEMBER` now includes `last_read_message_id` (unread badges) and `cleared_at` (self-clear — distinct from `visible`, which masking flips, so a `BlockRemoved` restore doesn't resurrect a deliberately cleared thread) in `entities/er-diagram.md`.
 
 ---
 

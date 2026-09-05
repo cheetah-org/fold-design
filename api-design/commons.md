@@ -51,9 +51,9 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 
 | Interface | Producer | Consumed by | Methods (doc source) |
 |---|---|---|---|
-| `UserClient` | `users` | `auth`, `matching`, `messaging`, `notifications`, `discovery`, `analytics` | `getPublicProfile(userId) → PublicUserResponse` (`user.md` §GET masked) · `lookupByCredential(credentialId) → Optional<UserId>` (`auth.md` §1.1 onb/oid resolution) · `getStatus(userId) → UserStatus` (`auth.md` §3 status gate) · `getActiveGenderCounts(city) → { women, men }` (`analytics.md` reconciliation) |
-| `RatioClient` | `ratio` | `users` | `evaluateGenderRatio(city, gender) → GateDecisionDto` (`ratio.md` §Sync gate contract) |
-| `AnalyticsClient` | `analytics` | `ratio` | `getRatioState(city) → RatioStateDto` (`analytics.md` §Sync client contract) |
+| `UserClient` | `users` | `auth`, `matching`, `messaging`, `notifications`, `analytics` | `getPublicProfile(userId) → PublicUserResponse` (`user.md` §GET masked) · `lookupByCredential(credentialId) → Optional<UserId>` (`auth.md` §1.1 onb/oid resolution) · `getStatus(userId) → UserStatus` (`auth.md` §3 status gate) · `getActiveGenderCounts(region) → { women, men }` (`analytics.md` reconciliation) |
+| `RatioClient` | `ratio` | `users` | `evaluateGenderRatio(region, gender) → GateDecisionDto` (`ratio.md` §Sync gate contract) |
+| `AnalyticsClient` | `analytics` | `ratio` | `getRatioState(region) → RatioStateDto` (`analytics.md` §Sync client contract) |
 | `MatchingClient` | `matching` | `messaging` | `getMatch(matchId) → MatchInfo { match_id, woman_id, man_id, status }` (`messaging.md` — thread creation + masking checks) |
 
 ---
@@ -64,17 +64,17 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 
 | Record | Payload | Producer → consumers (doc) |
 |---|---|---|
-| `users.UserRegistered` | `{ user_id, credential_id, gender, city, status, created_at }` | users → discovery, matching, notifications, analytics |
-| `users.ProfileUpdated` | `{ user_id }` (projection refetches via `UserClient`) | users → discovery, matching |
-| `users.PhotoChanged` | `{ user_id, photo_id, change: ADDED\|REMOVED\|REORDERED }` | users → discovery, matching |
-| `users.UserDeactivated` | `{ user_id, credential_id }` | users → messaging, ratio, notifications, discovery |
+| `users.UserRegistered` | `{ user_id, credential_id, gender, region, status, created_at }` | users → matching, notifications, analytics |
+| `users.ProfileUpdated` | `{ user_id }` (projection refetches via `UserClient`) | users → matching |
+| `users.PhotoChanged` | `{ user_id, photo_id, change: ADDED\|REMOVED\|REORDERED }` | users → matching |
+| `users.UserDeactivated` | `{ user_id, credential_id }` | users → messaging, ratio, notifications, matching |
 | `users.UserShadowBanned` | `{ user_id }` | users → notifications, analytics |
-| `users.UserSuspended` | `{ user_id }` | users → discovery, notifications, ratio |
-| `users.UserReactivated` | `{ user_id }` | users → discovery, notifications, ratio |
+| `users.UserSuspended` | `{ user_id }` | users → matching, notifications, ratio |
+| `users.UserReactivated` | `{ user_id }` | users → matching, notifications, ratio |
 | `users.ReportFiled` | `{ report_id, reporter_id, reported_id, category }` | users → analytics |
 | `users.ReportResolved` | `{ report_id, decision, reported_id, reporter_id }` | users → analytics |
-| `users.BlockCreated` | `{ blocker_id, blocked_id }` | users → discovery, matching, messaging |
-| `users.BlockRemoved` | `{ blocker_id, blocked_id }` | users → discovery, matching, messaging |
+| `users.BlockCreated` | `{ blocker_id, blocked_id }` | users → matching, messaging |
+| `users.BlockRemoved` | `{ blocker_id, blocked_id }` | users → matching, messaging |
 | `auth.SessionRevoked` | `{ session_id, credential_id }` (pinned, `auth.md` §9.5) | auth → notifications (device cleanup) |
 | `auth.CredentialUpserted` | `{ credential_id, email }` | auth → notifications (email projection) |
 | `matching.LikeReceived` | `{ like_id, liker_id, liked_id }` | matching → notifications, analytics |
@@ -126,9 +126,9 @@ Rule: a new code = enum entry **first**, doc row second. Codes are never renamed
 {
   "error": {
     "code": "VALIDATION_ERROR",
-    "message": "city is required",
+    "message": "location is required",
     "traceId": "8f2c1a3d-4b5e-4c6f-9a0d-1e2f3a4b5c6d",
-    "field_errors": [{ "field": "city", "message": "required" }]
+    "field_errors": [{ "field": "location.name", "message": "required" }]
   }
 }
 ```

@@ -28,7 +28,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 
 ### 2. Women Outnumber Men — Always
 - At any point, the number of active women must be greater than or equal to the number of active men
-- Enforced at city level (Bangalore for V1)
+- Enforced at region level (derived from user geolocation; Bangalore metro for V1)
 - If a man tries to register when counts are equal, he enters a waiting queue
 - If ratio tips because women leave, new male registrations are paused — notified, not deleted
 - Active conversations are never interrupted by ratio enforcement
@@ -63,7 +63,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 ### Registration Flow
 ```
 Download → Sign in with Google 
-→ Fetch name, email from Google; collect dob in the short form → Age check (must be 21+) → Profile creation → Done
+→ Fetch name, email from Google; collect dob + location in the short form → Age check (must be 21+) → Profile creation → Done
 ```
 
 ### For Men — Queue Experience
@@ -214,7 +214,7 @@ No ads. Ever.
 
 ## Out of Scope for V1
 
-- Multiple cities (Bangalore only)
+- Multiple regions (Bangalore metro only)
 - Web app
 - Media in chat (photos, voice notes, video)
 - In-app date planning or venue suggestions

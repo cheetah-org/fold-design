@@ -33,7 +33,7 @@ A notification **event creates one `NOTIFICATION` row** (appears in the inbox) a
 
 > **Assumption (explicit, not changed):** `LIKE` means *a woman liking a man* under this product's browse model (women browse → men receive). This implies a female→male direction and interacts with the gender-ratio admission/queue in `user.md` "Admission & queue rules". If the product ever introduces male→female likes or same-sex matching, `LIKE` semantics and its channels change — flagged here so it's a deliberate decision, not embedded only in table prose.
 > `EMAIL` carries only `EXPIRY` + `WEEKLY_SUMMARY` by design (cost/deliverability); push carries the transient alerts.
-> **ER additions:** `VIEW` is not in the ER `NOTIFICATION.type` enum — added for the daily anonymous view-count; `channel` is new on the row. Lock with the ER update when approved.
+> **ER synced:** `VIEW` on `NOTIFICATION.type`, `channels`/`read`/`sent_at` on `NOTIFICATION`, `channel` on `NOTIFICATION_PREFERENCE` (composite PK), `session_id`/`device_fingerprint`/`created_at` on `DEVICE_TOKEN` — all reflected in `entities/er-diagram.md`.
 
 ---
 
@@ -293,4 +293,4 @@ A dropped event would leave a logged-out device receiving pushes — the transac
 - **Recipient email:** token `email` claim for client-presented paths; for server-initiated email jobs (`EXPIRY`/`WEEKLY_SUMMARY`) resolved from a local `recipient_email` projection fed by auth's `CredentialUpserted { credential_id, email }` events (transactional, at-least-once — `auth.md` §9.5). No sync calls back to auth, per the modulith rule that modules never call auth. (Review fix: earlier text said "Auth Lib credential lookup", contradicting that rule.)
 - **Un-onboarded gate:** `onb=false` → `403 ONBOARDING_INCOMPLETE` on every endpoint here (no `userId` exists yet).
 - **Types are additive:** adding a type is a contract change (this table + matching/user DTOs), not a schema migration.
-- **ER alignment:** add `VIEW` to `NOTIFICATION.type`; add `channel` on the row; `DEVICE` row keys on `session_id`.
+- **ER synced:** `VIEW`, `channels`, `read`, `sent_at` on `NOTIFICATION`; composite PK `(user_id, type, channel)` on `NOTIFICATION_PREFERENCE`; `session_id`/`device_fingerprint`/`created_at` on `DEVICE_TOKEN` — all reflected in `entities/er-diagram.md`.

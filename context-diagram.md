@@ -12,6 +12,4 @@ graph TD
     DatingApp -.-> |Sends Push| Push[Push Notification Service]
     DatingApp -.-> |Uploads| AppStore[App Stores]
     DatingApp -.-> |Reports| Analytics[Analytics Platform]
-    
-    DatingApp -.-> |Verifies Gov ID| IDVerification[ID Verification Service]
 ```

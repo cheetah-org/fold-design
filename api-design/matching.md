@@ -25,7 +25,7 @@ Base URL: `https://api.wiingman.in/matching/api/v1` — gateway convention `{bas
 | Match | One `ACTIVE` match per pair. Accept creates it; `MatchCreated` → `messaging` opens the conversation (its id backfills onto the match **asynchronously** — `conversation_id` may be `null` briefly). |
 | Unmatch | Either party, any time. `MatchDeleted` → `messaging` purges the thread; the pair enters the 30-day cooldown. |
 
-**Status enums:** `LIKE`: `PENDING | ACCEPTED | PASSED | EXPIRED` *(ER gains `EXPIRED` — alignment note)* · `MATCH`: `ACTIVE | UNMATCHED`.
+**Status enums:** `LIKE`: `PENDING | ACCEPTED | PASSED | EXPIRED` · `MATCH`: `ACTIVE | UNMATCHED`.
 
 ---
 
@@ -82,7 +82,7 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
     "name": "Priya",
     "age": 31,
     "gender": "FEMALE",
-    "city": "Bangalore",
+    "location_name": "BTM Layout, Bangalore",
     "bio": "Coffee, music, long walks",
     "description": "Looking to meet someone younger.",
     "preferences": ["coffee", "live music"],
@@ -103,7 +103,7 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
     "name": "Rohan",
     "age": 28,
     "gender": "MALE",
-    "city": "Bangalore",
+    "location_name": "BTM Layout, Bangalore",
     "bio": "I make coffee",
     "description": "Looking to meet someone older.",
     "preferences": ["coffee"],
@@ -137,7 +137,7 @@ Canonical envelope (`auth.md` §2); Auth Lib `TOKEN_*` set global; `429 TOO_MANY
       "name": "Rohan",
       "age": 28,
       "gender": "MALE",
-      "city": "Bangalore",
+      "location_name": "BTM Layout, Bangalore",
       "bio": "I make coffee",
       "description": "Looking to meet someone older.",
       "preferences": ["coffee"],
@@ -237,7 +237,7 @@ The woman's deck. Owner check + female-only gate. Cursor-based pagination via `F
       "name": "Rohan",
       "age": 28,
       "gender": "MALE",
-      "city": "Bangalore",
+      "location_name": "BTM Layout, Bangalore",
       "bio": "I make coffee",
       "description": "Looking to meet someone older.",
       "preferences": ["coffee"],
@@ -298,5 +298,5 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 - **Profile reads:** inbox/match cards embed `PublicUserDto` via the `users` module's `UserClient` (sync, in-process — inter-service-communication.md L3). Masking/mirrored-404 semantics owned there.
 - **Eligibility pool:** the deck is served from the event-fed pool (inter-service-communication.md L1) — `UserRegistered`/`UserDeactivated`/`ProfileUpdated`/`PhotoChanged` listeners maintain it; never per-card sync calls.
 - **View events:** deck cards emit `ProfileViewed(source=DECK)` per rendered card; the `users` module emits `source=PROFILE` on profile open — `analytics` aggregates both for "X women viewed you today" and the weekly summary.
-- **ER alignment:** `LIKE.status` gains `EXPIRED`; `FEED_CURSOR` (server-tracked cursor, §Discovery feed) is owned by this module's discovery half; `PROFILE_VIEW_EVENT.source` gains `DECK`.
+- **ER synced:** `LIKE.status` includes `EXPIRED`; `FEED_CURSOR` (server-tracked cursor, §Discovery feed) is owned by this module's discovery half; `PROFILE_VIEW_EVENT.source` includes `DECK` — all reflected in `entities/er-diagram.md`.
 - **Deferred (premium):** spotlight boost, advanced feed filters, like-delivery insights — future contract additions; the like/match/deck model above doesn't preclude them.
