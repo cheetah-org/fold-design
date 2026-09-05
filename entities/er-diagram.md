@@ -298,7 +298,7 @@ erDiagram
 
 # auth-service
 
-Thin credential store. CRUD for `AUTH_CREDENTIAL`. Mints `AUTH_CREDENTIAL` on Google OAuth sign-in (fetching name, DOB, email from the Google account) and hands a `user_id` to User Service; never owns `USER`.
+Thin credential store. CRUD for `AUTH_CREDENTIAL`. Mints `AUTH_CREDENTIAL` on Google OAuth sign-in (fetching name and email from the Google account — ID tokens never carry DOB, review fix) and hands a `user_id` to User Service; never owns `USER`.
 
 ```mermaid
 erDiagram

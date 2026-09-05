@@ -11,14 +11,14 @@ sequenceDiagram
 
     User ->> Client: Sign in with Google (Firebase)
     Client ->> Firebase: OAuth sign-in
-    Firebase -->> Client: Firebase ID token (name, DOB, email)
+    Firebase -->> Client: Firebase ID token (name, email — ID tokens never carry DOB)
     Client ->> Auth: POST /auth/google (Firebase ID token)
     Auth ->> DB: Upsert AUTH_CREDENTIAL (google_sub, email)
     Auth -->> Client: access token + userExists / onboarded flag
 
     alt New user (no USER row yet)
-        Client ->> User: Short form (fields Google didn't give: gender, city, dob if missing)
-        Client ->> UserSvc: POST /users (gender, city, dob?)
+        Client ->> User: Short form (gender, city — dob always required, Google ID tokens carry none)
+        Client ->> UserSvc: POST /users (name, gender, city, dob)
         UserSvc ->> DB: Age gate check (21+)
         UserSvc ->> Ratio: Evaluate gender ratio (SYNC)
         alt Woman OR man with ratio OK

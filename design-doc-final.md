@@ -24,7 +24,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 - Minimum age to register: 21 for everyone
 - A woman is only shown men who are strictly younger than her
 - A man is only shown to women who are strictly older than him
-- Age is taken from the date of birth fetched from the user's Google account at registration
+- Age is taken from a user-supplied date of birth at registration (Google ID tokens never carry DOB)
 
 ### 2. Women Outnumber Men — Always
 - At any point, the number of active women must be greater than or equal to the number of active men
@@ -63,7 +63,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 ### Registration Flow
 ```
 Download → Sign in with Google 
-→ Fetch name, DOB, email from Google → Age check (must be 21+) → Profile creation → Done
+→ Fetch name, email from Google; collect dob in the short form → Age check (must be 21+) → Profile creation → Done
 ```
 
 ### For Men — Queue Experience
@@ -177,7 +177,7 @@ No ads. Ever.
 |---|---|
 | Age gate | 21+ for everyone |
 | Younger only or same-age? | Strictly younger only |
-| Age verification | DOB fetched from Google account at registration |
+| Age verification | DOB supplied by the user at registration (Google ID tokens carry no DOB) |
 | Can men browse? | No |
 | Dwell-time auto-like | Removed |
 | Chat duration | 48 hours per message, no extend |
@@ -207,7 +207,7 @@ No ads. Ever.
 - **Real-time chat:** Spring WebSocket
 - **Push notifications:** Firebase Cloud Messaging (free tier)
 - **File storage:** Firebase Storage (free tier, 5GB)
-- **Auth:** Firebase Auth with Google OAuth — sign-in via Google account, fetch name/DOB/email
+- **Auth:** Firebase Auth with Google OAuth — sign-in via Google account, fetch name/email (DOB is user-supplied; ID tokens never carry it)
 - **Hosting:** Railway or Render (free/low-cost tier to start)
 
 ---

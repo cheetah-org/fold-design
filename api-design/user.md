@@ -8,7 +8,7 @@ Base URL: `https://api.wiingman.in/users/api/v1` — gateway convention `{baseUR
 
 **Resources** addressed by `userId` (`USER.id`, the `oid` claim) — no `/users/me`. Client learns its own `userId` from `POST /users` (and from `POST /auth/refresh` once `oid` appears); a fresh (`onb=false`) client has **no** `userId` yet.
 
-**Owner check:** `userId` from `oid` claim is compared to the path segment. A caller whose token has `onb=false` (un-onboarded) is rejected with `403 ONBOARDING_INCOMPLETE` on every endpoint except `POST /users` (and auth's own refresh/logout) — never a generic `FORBIDDEN`; see `auth.md` §2. An absent/unknown `oid` with `onb=true` is an internal inconsistency → `401 TOKEN_MALFORMED`.
+**Owner check:** `userId` from `oid` claim is compared to the path segment. A caller whose token has `onb=false` (un-onboarded) is rejected with `403 ONBOARDING_INCOMPLETE` on every endpoint except `POST /users` (and auth's own refresh/logout) — never a generic `FORBIDDEN`; see `auth.md` §2. An absent/unknown `oid` with `onb=true` is a server-side minting defect → `401 TOKEN_INVALID_CLAIMS` (review fix — `TOKEN_MALFORMED` is reserved for structural failures).
 
 ---
 

@@ -120,6 +120,7 @@ Every error row in every endpoint table below conforms to this envelope. Generic
 | `TOKEN_INVALID_AUDIENCE` | 401 | `aud` ≠ `fold-mobile` |
 | `TOKEN_UNKNOWN_KID` | 401 | signer key not in local JWKS cache; verifier refreshes once, then refuses |
 | `TOKEN_REVOKED` | 401 | **reserved** — returned only once the future `jti` denylist ships; in V1 access tokens are not revocable and this code is never returned |
+| `TOKEN_INVALID_CLAIMS` | 401 | structurally valid token with an inconsistent claim set (e.g. `onb=true` without `oid`) — a server-side minting defect; the only remedy is re-auth |
 | `ONBOARDING_INCOMPLETE` | 403 | caller's `onb` claim is `false` — the **canonical** code services use for un-onboarded principals, instead of a generic `FORBIDDEN` |
 | `TOO_MANY_REQUESTS` | 429 | handled centrally by shared infrastructure (TBD) |
 | `TEMPORARY_ERROR` | 503 | |
@@ -325,7 +326,7 @@ Omitted scenarios resolve to: DB/verifier infrastructure failure → `503 TEMPOR
 
 **Purpose:** Publish the RSA public keys that verify our JWTs. Auth Lib fetches (and caches) these to validate access tokens **without** calling Auth Service.
 
-**Method + path:** `GET /.well-known/jwks.json` (public path via the gateway: `/auth/.well-known/jwks.json`)
+**Method + path:** `GET /.well-known/jwks.json` (public path via the gateway: `/auth/.well-known/jwks.json` — deliberate exception to the `{service}/api/v1/{resource}` convention: `.well-known` URIs sit directly under the service prefix, with no `/api/v1` segment)
 
 **Auth requirement:** none.
 

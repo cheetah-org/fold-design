@@ -9,7 +9,7 @@ Base URL: `https://api.wiingman.in/ratio/api/v1` — gateway convention `{baseUR
 - **Events out** (§Published events) that flip `USER.status` — applied by the `users` module, pushed by `notifications`.
 - **Admin/debug surface** (§Admin surface) — `DEV`/`ADMIN` only, user-first URIs per convention (no admin namespace).
 
-**Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Admin check order (task fix):** authenticate → require `DEV`/`ADMIN` in `roles` (else `403 FORBIDDEN`) → the onboarding check (`403 ONBOARDING_INCOMPLETE`) applies **only to non-admin callers** — internal/admin/service identities may never carry a meaningful `onb` flag.
+**Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Check order:** authenticate → require `DEV`/`ADMIN` in `roles` (else `403 FORBIDDEN`). Every route in this service is admin-only, so the onboarding check never fires here (review fix — dead `ONBOARDING_INCOMPLETE` rows removed).
 
 ---
 
@@ -84,8 +84,7 @@ Force-admit from the queue, **bypassing the gate** (audit-logged as manual). Gua
 
 | Status | Code |
 |---|---|
-| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first) |
-| 403 | `ONBOARDING_INCOMPLETE` — non-admin caller has not completed onboarding |
+| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 404 | `NOT_FOUND` — user missing or not in queue |
 | 409 | `INVALID_STATE` — target not `QUEUED` |
 
@@ -107,8 +106,7 @@ Per-user `RATIO_EVENT_LOG` (ops debugging without DB access). `?type=&page=&size
 
 | Status | Code |
 |---|---|
-| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first) |
-| 403 | `ONBOARDING_INCOMPLETE` — non-admin caller has not completed onboarding |
+| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 404 | `NOT_FOUND` — user missing |
 
 ### `GET /cities/{city}/admission-gate`
@@ -139,8 +137,7 @@ Override the gate for a city. Body `{ "mode": "AUTO" | "OPEN" | "CLOSED" }` — 
 
 | Status | Code (both gate routes) |
 |---|---|
-| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first) |
-| 403 | `ONBOARDING_INCOMPLETE` — non-admin caller has not completed onboarding |
+| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 422 | `VALIDATION_ERROR` — unknown city / bad `mode` |
 
 > City as a resource (`/cities/{city}/...`) is the one non-user-first path in the API set — gate state is city-scoped, not user-scoped. V1 has exactly one city (`Bangalore`).

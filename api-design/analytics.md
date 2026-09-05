@@ -4,7 +4,7 @@ Base URL: `https://api.wiingman.in/analytics/api/v1` — gateway convention `{ba
 
 **Module:** `analytics` in the Spring Boot modulith. Owns `RATIO_STATE` (raw gender counts only — no gate state; ratio owns the open/closed decision), `PROFILE_VIEW_EVENT`, `ENGAGEMENT_FACT` (ER). **No end-user surface** — an internal, event-fed module whose outputs are (a) the count projection ratio reads, (b) two scheduled announcements notifications renders, (c) an admin/ops-only read surface. Powers the product promises "X women viewed your profile today" (daily push) and the weekly summary email.
 
-**Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Admin check order (same as `ratio.md`):** authenticate → require `DEV`/`ADMIN` (else `403 FORBIDDEN`) → onboarding check applies only to non-admin callers.
+**Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Check order (same as `ratio.md`):** authenticate → require `DEV`/`ADMIN` (else `403 FORBIDDEN`). Every route in this service is admin-only, so the onboarding check never fires here (review fix — dead rows removed).
 
 ---
 
@@ -96,8 +96,7 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 
 | Status | Code |
 |---|---|
-| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first) |
-| 403 | `ONBOARDING_INCOMPLETE` — non-admin caller has not completed onboarding |
+| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 422 | `VALIDATION_ERROR` — unknown city |
 
 ### `POST /cities/{city}/ratio-state/recompute`
@@ -105,8 +104,7 @@ Force reconciliation: sync-call `UserClient.getActiveGenderCounts(city)`, overwr
 
 | Status | Code |
 |---|---|
-| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first) |
-| 403 | `ONBOARDING_INCOMPLETE` — non-admin caller has not completed onboarding |
+| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 422 | `VALIDATION_ERROR` — unknown city |
 | 503 | `TEMPORARY_ERROR` — users module unreachable; retry |
 
@@ -115,8 +113,7 @@ Paged facts. `?bucket=hour|day&from=&to=&page=&size=` (default `bucket=day`, new
 
 | Status | Code |
 |---|---|
-| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first) |
-| 403 | `ONBOARDING_INCOMPLETE` — non-admin caller has not completed onboarding |
+| 403 | `FORBIDDEN` — caller lacks `DEV`/`ADMIN` role (checked first; every route here is admin-only, so `ONBOARDING_INCOMPLETE` never fires — review fix) |
 | 422 | `VALIDATION_ERROR` — bad `bucket`/range |
 
 > `/cities/{city}/...` is city-scoped like `ratio.md`'s gate — analytics state is per-city, not per-user. V1 has exactly one city (`Bangalore`).
