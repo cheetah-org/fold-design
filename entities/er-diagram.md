@@ -6,7 +6,7 @@ erDiagram
     AUTH_CREDENTIAL {
         string id PK
         string google_sub UK "Google OAuth sub"
-        string user_id FK
+        string user_id "plain-ID ref to USER; auth-side mirror of USER.credential_id"
         string email
         datetime created_at
     }
@@ -15,13 +15,13 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "f(onboarding_time)"
+        int rank "FIFO position, monotonic with onboarding time"
         datetime admitted_at
         datetime created_at
     }
     RATIO_EVENT_LOG {
         string id PK
-        enum type "ADMITTED | SOFT_PAUSED | DEACTIVATED"
+        enum type "ADMITTED | QUEUED | DEACTIVATED"
         string user_id FK
         datetime at
     }
@@ -29,10 +29,9 @@ erDiagram
     %% ============ WEST: ANALYTICS SERVICE ============
     RATIO_STATE {
         string id PK
-        string city
+        string region "derived from user geolocation (e.g. Bangalore metro)"
         int active_women
         int active_men
-        boolean admission_open
         datetime updated_at
     }
     PROFILE_VIEW_EVENT {
@@ -45,7 +44,8 @@ erDiagram
     ENGAGEMENT_FACT {
         string id PK
         string bucket "hour | day"
-        string city
+        string region
+        datetime period_start
         int likes
         int matches
         int new_users
@@ -55,18 +55,31 @@ erDiagram
     %% ============ CENTER: USER SERVICE ============
     USER {
         string id PK
-        string name "from Google"
+        string credential_id UK "ref to AUTH_CREDENTIAL.id; unique among live (non-DEACTIVATED) rows"
+        string name "from Google profile (client-supplied at POST /users)"
+        string username "display handle, not unique"
         enum gender "FEMALE | MALE"
-        date dob "from Google"
-        string city
-        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
+        date dob "user-supplied (Google ID tokens carry no DOB)"
+        string location_name "display name from places API (e.g. BTM Layout, Bangalore)"
+        double latitude
+        double longitude
+        enum status "ACTIVE | QUEUED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
     PROFILE {
         string user_id PK, FK "1:1 USER"
         string bio
         string description
-        json preferences "multiple-choice"
+        int height "cm"
+        string job_title
+        string company
+        string school
+        enum education_level "HIGH_SCHOOL | UNDERGRAD | POSTGRAD | TRADE_SCHOOL"
+        string hometown
+        enum religion "HINDU | MUSLIM | CHRISTIAN | CATHOLIC | SIKH | BUDDHIST | JAIN | SPIRITUAL | AGNOSTIC | ATHEIST | OTHER"
+        json languages "multi-select"
+        enum drinking "YES | SOMETIMES | NEVER"
+        enum smoking "YES | SOMETIMES | NEVER"
     }
     PHOTO {
         string id PK
@@ -80,8 +93,11 @@ erDiagram
         string reporter_id FK
         string reported_id FK
         enum category "HARASSMENT | FAKE_PROFILE | UNDERAGE | INAPPROPRIATE | BLOCK"
+        enum priority "HIGH | NORMAL"
         enum status "PENDING | NOT_UPHELD | UPHELD"
+        string notes "reporter notes, <= 2000 chars"
         string reviewed_by
+        datetime reviewed_at
         datetime created_at
     }
     BLOCK {
@@ -97,7 +113,7 @@ erDiagram
         string id PK
         string liker_id FK "woman"
         string liked_id FK "man"
-        enum status "PENDING | ACCEPTED | PASSED"
+        enum status "PENDING | ACCEPTED | PASSED | EXPIRED"
         datetime expires_at
         datetime created_at
     }
@@ -127,6 +143,8 @@ erDiagram
         string conversation_id FK
         string user_id FK
         boolean visible
+        string last_read_message_id "drives unread badge count"
+        datetime cleared_at "self-clear timestamp; distinct from visible (masking)"
     }
     MESSAGE {
         string id PK
@@ -141,28 +159,35 @@ erDiagram
     DEVICE_TOKEN {
         string id PK
         string user_id FK
+        string session_id "from token sid claim; SessionRevoked deletes by this"
+        string device_fingerprint "from token dfp claim; dedup + DEVICE_MISMATCH validation"
         string fcm_token
-        string platform
+        string platform "ios | android"
+        datetime created_at
         datetime last_seen_at
     }
     NOTIFICATION {
         string id PK
         string user_id FK
-        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY"
+        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        json channels "push | email — channels dispatched to"
         json payload
         enum status "PENDING | SENT | FAILED"
+        boolean read "inbox state; false until marked read"
         datetime created_at
+        datetime sent_at
     }
     NOTIFICATION_PREFERENCE {
         string user_id PK, FK
-        enum type
+        enum type PK "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        enum channel PK "push | email"
         boolean enabled
     }
 
     %% ============ RELATIONSHIPS (interleaved so dagre spreads N/S/E/W) ============
 
     %% North: Auth -> User
-    AUTH_CREDENTIAL ||--o| USER : "creates"
+    AUTH_CREDENTIAL ||--o{ USER : "creates (review fix: retained DEACTIVATED rows + fresh live row — at most one live non-DEACTIVATED row per credential)"
 
     %% Northwest: Ratio -> User
     USER ||--o{ ADMISSION_QUEUE : "queued"
@@ -209,18 +234,31 @@ erDiagram
     %% Owned entities
     USER {
         string id PK
-        string name "from Google"
+        string credential_id UK "ref to AUTH_CREDENTIAL.id; unique among live (non-DEACTIVATED) rows"
+        string name "from Google profile (client-supplied at POST /users)"
+        string username "display handle, not unique"
         enum gender "FEMALE | MALE"
-        date dob "from Google"
-        string city
-        enum status "ACTIVE | QUEUED | SOFT_PAUSED | SUSPENDED | SHADOW_BANNED"
+        date dob "user-supplied (Google ID tokens carry no DOB)"
+        string location_name "display name from places API (e.g. BTM Layout, Bangalore)"
+        double latitude
+        double longitude
+        enum status "ACTIVE | QUEUED | SUSPENDED | SHADOW_BANNED | DEACTIVATED"
         datetime created_at
     }
     PROFILE {
         string user_id PK, FK "1:1 USER"
         string bio
         string description
-        json preferences "multiple-choice"
+        int height "cm"
+        string job_title
+        string company
+        string school
+        enum education_level "HIGH_SCHOOL | UNDERGRAD | POSTGRAD | TRADE_SCHOOL"
+        string hometown
+        enum religion "HINDU | MUSLIM | CHRISTIAN | CATHOLIC | SIKH | BUDDHIST | JAIN | SPIRITUAL | AGNOSTIC | ATHEIST | OTHER"
+        json languages "multi-select"
+        enum drinking "YES | SOMETIMES | NEVER"
+        enum smoking "YES | SOMETIMES | NEVER"
     }
     PHOTO {
         string id PK
@@ -234,8 +272,11 @@ erDiagram
         string reporter_id FK
         string reported_id FK
         enum category "HARASSMENT | FAKE_PROFILE | UNDERAGE | INAPPROPRIATE | BLOCK"
+        enum priority "HIGH | NORMAL"
         enum status "PENDING | NOT_UPHELD | UPHELD"
+        string notes "reporter notes, <= 2000 chars"
         string reviewed_by
+        datetime reviewed_at
         datetime created_at
     }
     BLOCK {
@@ -252,7 +293,7 @@ erDiagram
     }
 
     %% Relationships
-    AUTH_CREDENTIAL ||--o| USER : "creates (external)"
+    AUTH_CREDENTIAL ||--o{ USER : "creates (external, at most one live non-DEACTIVATED row)"
     USER ||--|| PROFILE : "has"
     PROFILE ||--o{ PHOTO : "owns (max 6)"
     USER ||--o{ REPORT : "files as reporter"
@@ -262,7 +303,7 @@ erDiagram
 ```
 # ratio-service
 
-Owns the male admission waitlist and ratio audit trail. CRUD for `ADMISSION_QUEUE`, `RATIO_EVENT_LOG`. Reads `RATIO_STATE` (owned by Analytics Service) to decide `admission_open`; emits status events that User Service applies to `USER`.
+Owns the male admission waitlist and ratio audit trail. CRUD for `ADMISSION_QUEUE`, `RATIO_EVENT_LOG`. Reads `RATIO_STATE` (owned by Analytics Service; raw counts only) to decide gate state; emits status events that User Service applies to `USER`.
 
 ```mermaid
 erDiagram
@@ -270,13 +311,13 @@ erDiagram
     ADMISSION_QUEUE {
         string id PK
         string user_id FK
-        int rank "f(onboarding_time)"
+        int rank "FIFO position, monotonic with onboarding time"
         datetime admitted_at
         datetime created_at
     }
     RATIO_EVENT_LOG {
         string id PK
-        enum type "ADMITTED | SOFT_PAUSED | DEACTIVATED"
+        enum type "ADMITTED | QUEUED | DEACTIVATED"
         string user_id FK
         datetime at
     }
@@ -287,18 +328,16 @@ erDiagram
     }
     RATIO_STATE {
         string id PK
-        boolean admission_open
     }
 
     %% Relationships
     USER ||--o{ ADMISSION_QUEUE : "queued (external)"
     USER ||--o{ RATIO_EVENT_LOG : "status event (external)"
-    RATIO_STATE ||--o{ ADMISSION_QUEUE : "drives admission (external, no FK)"
 ```
 
 # auth-service
 
-Thin credential store. CRUD for `AUTH_CREDENTIAL`. Mints `AUTH_CREDENTIAL` on Google OAuth sign-in (fetching name, DOB, email from the Google account) and hands a `user_id` to User Service; never owns `USER`.
+Thin credential store. CRUD for `AUTH_CREDENTIAL`. Mints `AUTH_CREDENTIAL` on Google OAuth sign-in (fetching name and email from the Google account — ID tokens never carry DOB, review fix) and hands a `user_id` to User Service; never owns `USER`.
 
 ```mermaid
 erDiagram
@@ -306,7 +345,7 @@ erDiagram
     AUTH_CREDENTIAL {
         string id PK
         string google_sub UK "Google OAuth sub"
-        string user_id FK
+        string user_id "plain-ID ref to USER; auth-side mirror of USER.credential_id"
         string email
         datetime created_at
     }
@@ -331,7 +370,7 @@ erDiagram
         string id PK
         string liker_id FK "woman"
         string liked_id FK "man"
-        enum status "PENDING | ACCEPTED | PASSED"
+        enum status "PENDING | ACCEPTED | PASSED | EXPIRED"
         datetime expires_at
         datetime created_at
     }
@@ -384,6 +423,8 @@ erDiagram
         string conversation_id FK
         string user_id FK
         boolean visible
+        string last_read_message_id "drives unread badge count"
+        datetime cleared_at "self-clear timestamp; distinct from visible (masking)"
     }
     MESSAGE {
         string id PK
@@ -420,21 +461,28 @@ erDiagram
     DEVICE_TOKEN {
         string id PK
         string user_id FK
+        string session_id "from token sid claim; SessionRevoked deletes by this"
+        string device_fingerprint "from token dfp claim; dedup + DEVICE_MISMATCH validation"
         string fcm_token
-        string platform
+        string platform "ios | android"
+        datetime created_at
         datetime last_seen_at
     }
     NOTIFICATION {
         string id PK
         string user_id FK
-        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY"
+        enum type "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        json channels "push | email — channels dispatched to"
         json payload
         enum status "PENDING | SENT | FAILED"
+        boolean read "inbox state; false until marked read"
         datetime created_at
+        datetime sent_at
     }
     NOTIFICATION_PREFERENCE {
         string user_id PK, FK
-        enum type
+        enum type PK "LIKE | MATCH | EXPIRY | QUEUE_UPDATE | WEEKLY_SUMMARY | VIEW"
+        enum channel PK "push | email"
         boolean enabled
     }
 
@@ -451,17 +499,16 @@ erDiagram
 
 # analytics-service
 
-Reads domain events, owns aggregates and gender-ratio state. CRUD for `RATIO_STATE`, `PROFILE_VIEW_EVENT`, `ENGAGEMENT_FACT`. `RATIO_STATE` is consumed read-only by Ratio Service; `PROFILE_VIEW_EVENT` powers "X women viewed your profile today" and women's like-delivery insights.
+Reads domain events, owns aggregates and raw gender counts. CRUD for `RATIO_STATE`, `PROFILE_VIEW_EVENT`, `ENGAGEMENT_FACT`. `RATIO_STATE` (raw counts only, no gate state) is consumed read-only by Ratio Service; `PROFILE_VIEW_EVENT` powers "X women viewed your profile today" and women's like-delivery insights.
 
 ```mermaid
 erDiagram
     %% Owned entities
     RATIO_STATE {
         string id PK
-        string city
+        string region "derived from user geolocation (e.g. Bangalore metro)"
         int active_women
         int active_men
-        boolean admission_open
         datetime updated_at
     }
     PROFILE_VIEW_EVENT {
@@ -474,7 +521,8 @@ erDiagram
     ENGAGEMENT_FACT {
         string id PK
         string bucket "hour | day"
-        string city
+        string region
+        datetime period_start
         int likes
         int matches
         int new_users

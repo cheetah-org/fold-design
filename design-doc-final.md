@@ -24,13 +24,13 @@ A dating app with one rule: the woman must always be older than the man she matc
 - Minimum age to register: 21 for everyone
 - A woman is only shown men who are strictly younger than her
 - A man is only shown to women who are strictly older than him
-- Age is taken from the date of birth fetched from the user's Google account at registration
+- Age is taken from a user-supplied date of birth at registration (Google ID tokens never carry DOB)
 
 ### 2. Women Outnumber Men — Always
 - At any point, the number of active women must be greater than or equal to the number of active men
-- Enforced at city level (Bangalore for V1)
+- Enforced at region level (derived from user geolocation; Bangalore metro for V1)
 - If a man tries to register when counts are equal, he enters a waiting queue
-- If ratio tips because women leave, new male registrations are paused and the most recently admitted men are soft-paused — notified, not deleted
+- If ratio tips because women leave, new male registrations are paused — notified, not deleted
 - Active conversations are never interrupted by ratio enforcement
 
 ### 3. Women Browse, Men Receive
@@ -63,7 +63,7 @@ A dating app with one rule: the woman must always be older than the man she matc
 ### Registration Flow
 ```
 Download → Sign in with Google 
-→ Fetch name, DOB, email from Google → Age check (must be 21+) → Profile creation → Done
+→ Fetch name, email from Google; collect dob + location in the short form → Age check (must be 21+) → Profile creation → Done
 ```
 
 ### For Men — Queue Experience
@@ -76,10 +76,14 @@ Download → Sign in with Google
 
 ## Profiles
 
+**Required at onboarding:** name, username (display handle), gender, date of birth, location, photos (1–6)
+
+**Complete later (optional):** bio, description, height, job title, company, school, education level, hometown, religion, languages, drinking, smoking
+
 - Up to 6 photos
 - Bio: free text, anything they want
 - Description: free text, anything they want
-- No mandatory fields beyond the above, no curated prompts, no tags
+- Structured fields (Hinge-style): identity chips (height, gender) + about section (job, school, religion, etc.) + lifestyle (drinking, smoking)
 
 ---
 
@@ -177,12 +181,12 @@ No ads. Ever.
 |---|---|
 | Age gate | 21+ for everyone |
 | Younger only or same-age? | Strictly younger only |
-| Age verification | DOB fetched from Google account at registration |
+| Age verification | DOB supplied by the user at registration (Google ID tokens carry no DOB) |
 | Can men browse? | No |
 | Dwell-time auto-like | Removed |
 | Chat duration | 48 hours per message, no extend |
 | Unsend | No, for either party |
-| Profiles | Free-form only, no curated tags or prompts |
+| Profiles | Free-form bio/description + Hinge-style structured fields (height, job, school, religion, lifestyle) |
 | Photos | Up to 6, no mandatory selfie |
 | Chat features | Text only, all unlocked from first message, no gating |
 | Invisible mode | Removed |
@@ -192,9 +196,11 @@ No ads. Ever.
 | Profile access post-unmatch | Gone — same message whether unmatched or account deleted |
 | Reporting | Immediate shadow ban on report, unban if not upheld, permanent suspend if upheld, false reporters also suspended |
 | Platform | Mobile only, no web app |
-| Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Google OAuth + Firebase (FCM, Storage) + Railway |
+| Tech stack | Flutter + Java Spring Boot Modulith + PostgreSQL + Firebase (Auth, FCM, Storage — all-Firebase) + Railway |
 | Architecture | Modulith — single deployment, strict module boundaries |
-| Discovery algorithm | To be decided at build time |
+| Discovery algorithm | V1: random shuffle within filtered eligible pool. Filters: distance, age range, height, religion, education, drinking, smoking (all free). Vector-similarity ranking deferred. |
+| Passed re-feed | Passed/expired profiles re-enter deck after 7 days; re-like blocked until 30-day cooldown |
+| Event abstraction | `commons.pubsub` — transport-agnostic pub/sub (`DomainEventPublisher` + `@DomainEventListener`). V1: in-process Spring events. Kafka swap via profile, zero module code changes. External webhooks normalized through `WebhookAdapter` into the same pipeline. |
 
 ---
 
@@ -207,14 +213,14 @@ No ads. Ever.
 - **Real-time chat:** Spring WebSocket
 - **Push notifications:** Firebase Cloud Messaging (free tier)
 - **File storage:** Firebase Storage (free tier, 5GB)
-- **Auth:** Google OAuth — sign-in, fetch name/DOB/email
+- **Auth:** Firebase Auth with Google OAuth — sign-in via Google account, fetch name/email (DOB is user-supplied; ID tokens never carry it)
 - **Hosting:** Railway or Render (free/low-cost tier to start)
 
 ---
 
 ## Out of Scope for V1
 
-- Multiple cities (Bangalore only)
+- Multiple regions (Bangalore metro only)
 - Web app
 - Media in chat (photos, voice notes, video)
 - In-app date planning or venue suggestions

@@ -2,38 +2,41 @@
 sequenceDiagram
     participant User as User
     participant Client as Mobile Client
+    participant Firebase as Firebase (Google OAuth)
     participant Auth as Auth Service
-    participant Google as Google OAuth
-    participant Ratio as Ratio Service
     participant UserSvc as User Service
+    participant Ratio as Ratio Service
+    participant Notif as Notification Service
     participant DB as Database
 
-    User ->> Client: Sign in with Google
-    Client ->> Google: OAuth sign-in
-    Google -->> Client: Token + name, DOB, email
-    Client ->> Auth: Send Google ID token
-    Auth ->> DB: Check if user exists
-    Auth ->> DB: Store AUTH_CREDENTIAL (google_sub, email)
-    Auth ->> Ratio: Check gender ratio
-    alt If woman
-        Ratio ->> Auth: Ratio OK, proceed
-        Auth ->> DB: Create user (name, DOB)
-        Auth ->> Client: Registration successful
-    else If man and ratio OK
-        Ratio ->> Auth: Ratio OK, proceed
-        Auth ->> DB: Create user (name, DOB)
-        Auth ->> Client: Registration successful
-    else If man and ratio not OK
-        Ratio ->> Auth: Ratio not OK, queue
-        Auth ->> DB: Create queued user
-        Auth ->> Client: Added to queue
-        loop
-            Ratio ->> Ratio: Check ratio
-            Ratio ->> DB: Update queue
-            Ratio ->> Client: Queue update notification
+    User ->> Client: Sign in with Google (Firebase)
+    Client ->> Firebase: OAuth sign-in
+    Firebase -->> Client: Firebase ID token (name, email — ID tokens never carry DOB)
+    Client ->> Auth: POST /auth/google (Firebase ID token)
+    Auth ->> DB: Upsert AUTH_CREDENTIAL (google_sub, email)
+    Auth -->> Client: access token + userExists / onboarded flag
+
+    alt New user (no USER row yet)
+        Client ->> User: Short form (username, gender, location, photos — dob always required, Google ID tokens carry none)
+        Client ->> UserSvc: POST /users (name, username, gender, location, dob, photos)
+        UserSvc ->> DB: Age gate check (21+)
+        UserSvc ->> Ratio: Evaluate gender ratio (SYNC)
+        alt Woman OR man with ratio OK
+            Ratio -->> UserSvc: Admit
+            UserSvc ->> DB: Create USER + empty PROFILE (status ACTIVE)
+        else Man with ratio not OK
+            Ratio -->> UserSvc: Queue
+            UserSvc ->> DB: Create USER (status QUEUED), enqueue
+            loop Every ratio check cycle
+                Ratio ->> Ratio: Check ratio
+                Ratio -->> UserSvc: AdmittedFromQueue (ASYNC event)
+                UserSvc ->> DB: Update USER status -> ACTIVE
+                Ratio -->> Notif: AdmittedFromQueue (same event, fan-out)
+                Notif -->> Client: "You're in" push
+            end
         end
-        Ratio ->> Auth: Ratio OK, admit from queue
-        Auth ->> DB: Update user status
-        Auth ->> Client: Registration successful
+        UserSvc -->> Client: 201 created (user + queue position)
+    else Returning user
+        Client -->> User: App opens with existing account
     end
 ```
