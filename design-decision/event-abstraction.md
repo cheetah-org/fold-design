@@ -10,7 +10,7 @@
 
 Modules publish and consume domain events. Today that's Spring's `ApplicationEventPublisher` + `@ApplicationModuleListener`. When we extract to microservices with Kafka, every publisher and consumer call site would need rewriting. The abstraction isolates module code from transport so:
 
-- Publishers call `DomainEventPublisher.publish(payload)` — not Spring's API directly
+- Publishers call `DomainEventPublisher.publish(DomainEvent<T>)` — not Spring's API directly
 - Consumers annotate with `@DomainEventListener` — not Spring's annotations directly
 - Transport swap (Spring → Kafka) is a config change, not a code change
 
@@ -20,15 +20,16 @@ Modules publish and consume domain events. Today that's Spring's `ApplicationEve
 
 ### 2.1 `DomainEvent<T>` — generic event wrapper
 
-A single generic record that wraps any payload type. Modules never construct this — the publisher builds it automatically.
+A single generic envelope that wraps any payload type. Modules construct it with two mandatory fields — `objectId` (the partition key) and `data` (the plain payload record). The publisher completes the envelope: it derives `topic`/`eventType` from the payload type and generates `metadata` unless the caller supplied one.
 
 ```java
-public record DomainEvent<T>(
-    String topic,              // routing destination: fold.users.user-registered
-    String eventType,          // type discriminator: "UserRegistered"
-    T data,                    // the payload — plain record (UserRegistered, MatchCreated, etc.)
-    EventMetadata metadata     // routing, correlation, partitioning
-) {}
+public final class DomainEvent<T> {   // Lombok @Getter/@Builder
+    private final String objectId;    // partition key — required; publisher fails fast when absent
+    private final T data;             // the payload — plain record (UserRegistered, MatchCreated, etc.)
+    private final String topic;       // optional override; derived when null: fold.users.user-registered
+    private final String eventType;   // optional override; defaults to payload class simple name
+    private final EventMetadata metadata; // optional override; generated when null
+}
 ```
 
 ### 2.2 `EventMetadata` — routing + correlation
@@ -51,60 +52,27 @@ public record EventMetadata(
 | `origin` | Logging/debugging | Source identification across services |
 | `traceId` | Log correlation within the modulith | Distributed trace correlation across services |
 
-### 2.3 `@ObjectId` — partition key annotation
+### 2.3 Partition key (`objectId`) — chosen at the publish site
 
-Marks the field in a payload record that provides the `objectId` (partition key). The publisher reads this via reflection when wrapping the payload into `DomainEvent<T>`.
+The partition key is passed explicitly on every `DomainEvent<T>` the module builds (`DomainEvent.builder().objectId(...).data(...)`). There is no reflection annotation — the publisher validates presence and fails fast when `objectId` is null/blank, so an ordering guarantee can never be lost silently.
 
-```java
-@Target(ElementType.FIELD)
-@Retention(RetentionPolicy.RUNTIME)
-public @interface ObjectId {}
-```
-
-Usage in payload records:
-
-```java
-// commons.events.users
-public record UserRegistered(
-    @ObjectId String userId,       // partition key = userId
-    String credentialId,
-    String gender,
-    String region,
-    String status
-) {}
-
-// commons.events.matching
-public record LikeReceived(
-    String likeId,
-    String likerId,
-    @ObjectId String likedId       // partition key = the woman receiving the like
-) {}
-
-public record MatchCreated(
-    String matchId,
-    @ObjectId String womanId,      // partition key = woman (primary actor in the matching model)
-    String manId
-) {}
-```
-
-**Rule:** every event record in `commons.events.*` must have exactly one `@ObjectId` field. The publisher fails fast at startup if a record is missing the annotation.
-
-**Choosing the `@ObjectId`:** pick the user whose experience depends on ordered processing of this event. For most events that's straightforward (`userId`). For two-party events (like, match), it's the party whose state machine matters most — in fold's women-browse model, that's typically the woman.
+**Choosing the `objectId`:** pick the user whose experience depends on ordered processing of this event. For most events that's straightforward (`userId`). For two-party events (like, match), it's the party whose state machine matters most — in fold's women-browse model, that's typically the woman. The table in §3 records the choice per event type so publish sites stay consistent.
 
 ### 2.4 `DomainEventPublisher` — publish API
 
 ```java
 public interface DomainEventPublisher {
-    <T> void publish(T event);    // accepts plain payload, NOT DomainEvent<T>
+    <T> void publish(DomainEvent<T> event);    // caller sets objectId + data; publisher completes the envelope
 }
 ```
 
-One method. Module code passes a plain payload record. The publisher implementation:
-1. Reads `@ObjectId` from the payload to extract `objectId`
-2. Derives `topic` from the payload class (`UserRegistered` → `fold.users.user-registered`)
-3. Derives `origin` from the payload's package (`commons.events.users` → `"users"`)
-4. Generates `eventId` (UUID), reads `traceId` from MDC
-5. Wraps into `DomainEvent<T>` and dispatches via the transport
+One method. Module code builds the envelope with the partition key and payload. The publisher implementation:
+1. Validates `objectId` is present — fails fast otherwise (never substitutes a random key)
+2. Respects caller-supplied `topic`/`eventType`/`metadata`; derives/generates each when absent:
+   - `topic` from the payload class (`UserRegistered` → `fold.users.user-registered`)
+   - `origin` from the payload's package (`commons.events.users` → `"users"`)
+   - `eventId` (UUID), `publishedAt` (now), `traceId` from MDC
+3. Dispatches the completed envelope via the transport
 
 ### 2.5 `@DomainEventListener` — subscriber annotation
 
@@ -138,7 +106,7 @@ void onUserRegistered(DomainEvent<UserRegistered> event) {
 
 ## 3. Payload records — what changes
 
-The existing event records in `commons.events.*` are plain Java records. They gain one thing: an `@ObjectId` annotation on the partition key field. They do **not** implement any interface.
+The existing event records in `commons.events.*` are plain Java records. They carry no annotations and implement no interface — the partition key travels on the `DomainEvent<T>` envelope, not inside the payload.
 
 ### Before (current)
 
@@ -150,17 +118,18 @@ public record UserRegistered(String userId, String credentialId, String gender,
 ### After
 
 ```java
-public record UserRegistered(@ObjectId String userId, String credentialId,
+public record UserRegistered(String userId, String credentialId,
                               String gender, String region, String status) {}
 ```
 
 Changes:
-- Add `@ObjectId` on the partition key field
 - Remove `createdAt` from payload — `EventMetadata.publishedAt` carries the timestamp (no duplication)
 
-### `@ObjectId` mapping for all events
+### `objectId` mapping for all events
 
-| Event record | `@ObjectId` field | Why |
+The publish site must set `objectId` to the field listed here — this table is the contract for consistent partitioning:
+
+| Event record | `objectId` field | Why |
 |---|---|---|
 | `UserRegistered` | `userId` | User's own lifecycle |
 | `ProfileUpdated` | `userId` | User's own profile |
@@ -197,26 +166,25 @@ class InProcessEventPublisher implements DomainEventPublisher {
     private final ApplicationEventPublisher springPublisher;
 
     @Override
-    public <T> void publish(T payload) {
-        DomainEvent<T> event = wrap(payload);
-        springPublisher.publishEvent(event);
-    }
-
-    private <T> DomainEvent<T> wrap(T payload) {
-        Class<?> type = payload.getClass();
-        String objectId = extractObjectId(type, payload);
-        return new DomainEvent<>(
-            topicFor(type),
-            type.getSimpleName(),
-            payload,
-            new EventMetadata(
+    public <T> void publish(DomainEvent<T> event) {
+        if (event.getObjectId() == null || event.getObjectId().isBlank()) {
+            throw new IllegalArgumentException("objectId (partition key) is required");
+        }
+        T payload = event.getData();
+        DomainEvent<T> full = DomainEvent.<T>builder()
+            .objectId(event.getObjectId())
+            .data(payload)
+            .topic(orDefault(event.getTopic(), topicFor(payload.getClass())))
+            .eventType(orDefault(event.getEventType(), payload.getClass().getSimpleName()))
+            .metadata(orDefault(event.getMetadata(), new EventMetadata(
                 UUID.randomUUID().toString(),
-                objectId,
+                event.getObjectId(),
                 Instant.now(),
-                originFor(type),
+                originFor(payload.getClass()),
                 MDC.get("traceId")
-            )
-        );
+            )))
+            .build();
+        springPublisher.publishEvent(full);
     }
 }
 ```
@@ -234,11 +202,10 @@ class KafkaEventPublisher implements DomainEventPublisher {
     private final EventSerializer serializer;
 
     @Override
-    public <T> void publish(T payload) {
-        DomainEvent<T> event = wrap(payload);
+    public <T> void publish(DomainEvent<T> event) {
         String json = serializer.serialize(event);
-        kafka.send(event.topic(), event.metadata().objectId(), json);
-        //                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        kafka.send(event.topic(), event.objectId(), json);
+        //                        ^^^^^^^^^^^^^^^^^^^^
         //                        objectId is the Kafka message key
         //                        → same user → same partition → ordered
     }
@@ -344,8 +311,8 @@ External system → POST /webhooks/{provider}
                     2. parse provider payload
                     3. normalize → plain event record
                          │
-                  DomainEventPublisher.publish(record)
-                    → wraps into DomainEvent<T> with metadata
+                  DomainEventPublisher.publish(DomainEvent envelope with objectId + record)
+                     → publisher completes envelope, dispatches
                          │
                   @DomainEventListener (same as internal events)
 ```
@@ -387,7 +354,8 @@ class WebhookController {
 
         Object parsed = objectMapper.readValue(rawPayload, adapter.payloadType());
         Object event = adapter.normalize(parsed);
-        publisher.publish(event);       // wraps into DomainEvent<T>, same pipeline
+        publisher.publish(DomainEvent.builder().objectId(partitionKeyFor(event)).data(event).build());
+                                        // publisher completes the envelope, same pipeline
 
         return ResponseEntity.ok().build();
     }
@@ -421,7 +389,7 @@ class FcmWebhookAdapter implements WebhookAdapter<FcmDeliveryReceipt, PushDelive
 }
 ```
 
-The adapter returns a plain event record (`PushDeliveryFailed`) with an `@ObjectId` field. The publisher wraps it into `DomainEvent<PushDeliveryFailed>` automatically — same as any internal event.
+The adapter returns a plain event record (`PushDeliveryFailed`); the webhook controller builds the `DomainEvent<PushDeliveryFailed>` envelope with the `objectId` from §3's mapping — same as any internal event.
 
 ### 6.4 Webhook sources relevant to fold
 
@@ -482,17 +450,16 @@ One topic per event type. One consumer group per consuming module (all instances
 
 ```
 commons/pubsub/
-  DomainEvent.java                    — generic record: DomainEvent<T>(topic, eventType, data, metadata)
+  DomainEvent.java                    — generic envelope: objectId (required), data, optional topic/eventType/metadata
   EventMetadata.java                  — record: eventId, objectId, publishedAt, origin, traceId
-  ObjectId.java                       — field annotation: marks the partition key in payload records
-  DomainEventPublisher.java           — publish API interface: <T> void publish(T event)
+  DomainEventPublisher.java           — publish API interface: <T> void publish(DomainEvent<T> event)
   DomainEventListener.java            — subscriber annotation
   EventSerializer.java                — DomainEvent<T> ↔ JSON
   webhook/
     WebhookAdapter.java               — interface: provider, verify, normalize, payloadType
     WebhookController.java            — generic POST /webhooks/{provider} endpoint
   support/
-    InProcessEventPublisher.java      — V1: wraps payload → DomainEvent<T>, delegates to Spring
+    InProcessEventPublisher.java      — V1: validates objectId, completes envelope, delegates to Spring
     InProcessListenerRegistrar.java   — V1: translates @DomainEventListener → Spring listeners
 ```
 
@@ -500,7 +467,7 @@ Future additions (not in V1):
 
 ```
   support/
-    KafkaEventPublisher.java          — wraps payload → DomainEvent<T>, serializes, sends to Kafka with objectId as message key
+    KafkaEventPublisher.java          — serializes DomainEvent<T>, sends to Kafka with objectId as message key
     KafkaListenerRegistrar.java       — Kafka consumer: deser, offset, retry, DLQ, partition-ordered processing
 ```
 
@@ -521,12 +488,15 @@ class UserService {
         User user = userRepository.save(/* ... */);
 
         eventPublisher.publish(
-            new UserRegistered(user.getId(), req.credentialId(),
-                               req.gender(), req.region(), "ACTIVE")
+            DomainEvent.<UserRegistered>builder()
+                .objectId(user.getId())
+                .data(new UserRegistered(user.getId(), req.credentialId(),
+                                         req.gender(), req.region(), "ACTIVE"))
+                .build()
         );
-        // publisher wraps into DomainEvent<UserRegistered>:
-        //   topic     = "fold.users.user-registered"
-        //   eventType = "UserRegistered"
+        // publisher completes the envelope:
+        //   topic     = "fold.users.user-registered" (derived)
+        //   eventType = "UserRegistered" (derived)
         //   data      = the UserRegistered record
         //   metadata  = { eventId=UUID, objectId=user.getId(), publishedAt=now,
         //                  origin="users", traceId=MDC.get("traceId") }
@@ -560,9 +530,8 @@ class UserEventListener {
 
 | Component | V1 (modulith) | Later |
 |---|---|---|
-| `DomainEvent<T>` record | Build | — |
+| `DomainEvent<T>` envelope | Build | — |
 | `EventMetadata` record | Build | — |
-| `@ObjectId` annotation | Build | — |
 | `DomainEventPublisher` interface | Build | — |
 | `@DomainEventListener` annotation | Build | — |
 | `EventSerializer` | Build (used for DLQ logging, debugging) | Used for Kafka ser/deser |
@@ -575,7 +544,7 @@ class UserEventListener {
 | Batch consumption (`batch = true`) | — | Analytics high-volume consumers |
 | Concurrency config | — | Kafka parallel consumers |
 
-V1 surface: 7 classes. The contract is designed so Kafka and webhook adapters slot in without changing any module code.
+V1 surface: 6 classes. The contract is designed so Kafka and webhook adapters slot in without changing any module code.
 
 ---
 
@@ -588,7 +557,7 @@ When extracting to microservices:
 3. Create Kafka topics matching the naming convention (§8)
 4. Activate via `--spring.profiles.active=kafka`
 5. `InProcessEventPublisher` and `InProcessListenerRegistrar` deactivate
-6. Module code: **zero changes** — same `eventPublisher.publish(payload)`, same `@DomainEventListener`
+6. Module code: **zero changes** — same `eventPublisher.publish(DomainEvent<T>)`, same `@DomainEventListener`
 7. `objectId` automatically becomes the Kafka message key → partition affinity → ordered processing per user
 8. Verify idempotency — at-least-once semantics remain, but duplicates may arrive from different partitions
 9. Add webhook adapters if external push integrations are live
@@ -598,9 +567,9 @@ When extracting to microservices:
 ## 13. Non-rules
 
 - Modules never import `ApplicationEventPublisher` or `@ApplicationModuleListener` directly — always through the abstraction.
-- Payload records in `commons.events.*` are plain Java records with `@ObjectId` — they do not implement any interface.
-- Every payload record must have exactly one `@ObjectId` field — the publisher validates this at startup.
-- Modules publish plain payloads (`eventPublisher.publish(payload)`), never construct `DomainEvent<T>` or `EventMetadata` directly — the publisher builds the wrapper.
+- Payload records in `commons.events.*` are plain Java records — they do not implement any interface and carry no annotations.
+- Every `DomainEvent<T>` must carry an `objectId` (partition key per §3's mapping) — the publisher validates this on every publish and fails fast; it never substitutes a random key.
+- Modules set `objectId` + `data` on the envelope; the publisher completes it (`topic`, `eventType`, `metadata` derived/generated when the caller leaves them unset, caller-supplied values respected when set).
 - The `WebhookController` lives in commons but only activates when at least one `WebhookAdapter` bean exists (`@ConditionalOnBean`).
 - Webhook secrets are external config (`fold.webhooks.{provider}.secret` in `application.yml`) — never hardcoded.
 - Event records remain additive-only and snake_case JSON — same contract as before this abstraction.
