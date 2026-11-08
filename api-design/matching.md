@@ -346,7 +346,7 @@ Choices made where the contract is silent or ambiguous; the code follows these, 
 - **Paging:** `page` ≥ 0, `size` 1..`fold.matching.max-page-size` (default 20 / max 50), else `422 VALIDATION_ERROR` with field errors.
 - **Unconvertible query/path values** (e.g. `?status=FOO`) → `422 VALIDATION_ERROR` with a `field_errors` entry naming the parameter. This is a global behavior of the shared exception handler (previously `400 INVALID_REQUEST_BODY`), so it applies to every module's endpoints.
 - **Config:** `fold.matching.like-ttl` (48h), `relike-cooldown` (30d), `expiry-sweep-interval` (1h), `default-page-size`, `max-page-size`.
-- **Not in this slice:** notification wiring for `LikeReceived`/`MatchCreated`, and the `messaging` consumer that backfills `conversation_id`. (The discovery feed is covered in the next section.)
+- **Not in this slice:** the `messaging` consumer that backfills `conversation_id`. (The discovery feed is covered in the next section; the `LikeReceived`/`MatchCreated` notifications are documented in `notifications.md`.)
 
 ---
 
