@@ -329,3 +329,21 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 - **View events:** deck cards emit `ProfileViewed(source=DECK)` per rendered card; the `users` module emits `source=PROFILE` on profile open — `analytics` aggregates both for "X women viewed you today" and the weekly summary.
 - **ER synced:** `LIKE.status` includes `EXPIRED`; `FEED_CURSOR` (server-tracked cursor, §Discovery feed) is owned by this module's discovery half; `PROFILE_VIEW_EVENT.source` includes `DECK` — all reflected in `entities/er-diagram.md`.
 - **Deferred (premium):** spotlight boost, advanced feed filters, like-delivery insights — future contract additions; the like/match/deck model above doesn't preclude them.
+
+---
+
+## Implementation notes — likes & matches slice (V1 backend)
+
+Choices made where the contract is silent or ambiguous; the code follows these, so a change here is a change there.
+
+- **"Strictly younger" = exact date of birth.** The target's DOB must be strictly after the liker's (same DOB fails). It is *not* a whole-year age comparison; the feed's `min_age`/`max_age` filters still use whole years.
+- **Female target on like-creation → `404 USER_NOT_VISIBLE`** (the pool is men-only; same masking as a hidden user). The guard order is otherwise as specced, with the self check before the gender check so a self-like reports `CANNOT_LIKE_SELF`.
+- **A woman with an `ACTIVE` match to the target who likes again → `409 LIKE_EXISTS`** (one active match per pair).
+- **Expiry is enforced lazily as well as hourly.** Accept/pass treat a `PENDING` like past `expires_at` as `409 LIKE_NOT_PENDING`; like-creation first flips that pair's overdue likes to `EXPIRED` (so the 30-day cooldown anchors on `expires_at`). `LIKE.resolved_at` (see ER) records pass time / expiry instant for the cooldown; unmatch time anchors on `MATCH.unmatched_at`.
+- **Pass keeps the spec'd `PAIR_INELIGIBLE` check** (blocked, or either party not `ACTIVE`). A blocked pending like therefore cannot be passed and simply expires.
+- **Inbox hides likes from senders the man can no longer see** (blocked, deactivated); the page `total` still counts them. **Match `counterpart` is `null`** when the other side is no longer visible (the client renders "User no longer exists").
+- **Onboarding gate (`onb=false` → `403 ONBOARDING_INCOMPLETE`)** is enforced in the matching controllers (it was not enforced anywhere before). Owner check: `oid` vs path `userId`, with the moderator identity (`Roles.isModerator`) bypassing the owner check only.
+- **Paging:** `page` ≥ 0, `size` 1..`fold.matching.max-page-size` (default 20 / max 50), else `422 VALIDATION_ERROR` with field errors.
+- **Unconvertible query/path values** (e.g. `?status=FOO`) → `422 VALIDATION_ERROR` with a `field_errors` entry naming the parameter. This is a global behavior of the shared exception handler (previously `400 INVALID_REQUEST_BODY`), so it applies to every module's endpoints.
+- **Config:** `fold.matching.like-ttl` (48h), `relike-cooldown` (30d), `expiry-sweep-interval` (1h), `default-page-size`, `max-page-size`.
+- **Not in this slice:** the discovery feed (`GET /users/{userId}/feed`, `ProfileViewed`), notification wiring for `LikeReceived`/`MatchCreated`, and the `messaging` consumer that backfills `conversation_id`.

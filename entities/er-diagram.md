@@ -115,6 +115,7 @@ erDiagram
         string liked_id FK "man"
         enum status "PENDING | ACCEPTED | PASSED | EXPIRED"
         datetime expires_at
+        datetime resolved_at "when it left PENDING (pass time or expiry instant); anchors the re-like cooldown"
         datetime created_at
     }
     MATCH {
@@ -372,6 +373,7 @@ erDiagram
         string liked_id FK "man"
         enum status "PENDING | ACCEPTED | PASSED | EXPIRED"
         datetime expires_at
+        datetime resolved_at "when it left PENDING (pass time or expiry instant); anchors the re-like cooldown"
         datetime created_at
     }
     MATCH {
