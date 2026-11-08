@@ -127,10 +127,24 @@ erDiagram
         datetime unmatched_at
         datetime created_at
     }
-    FEED_CURSOR {
-        string user_id PK, FK
-        string last_seen_profile_id
-        int limit
+    FEED_CANDIDATE {
+        string user_id PK, FK "an eligible man (ACTIVE); event-fed projection"
+        date dob
+        double latitude
+        double longitude
+        int height "nullable"
+        string religion "nullable"
+        string education_level "nullable"
+        string drinking "nullable"
+        string smoking "nullable"
+        datetime updated_at
+    }
+    FEED_IMPRESSION {
+        long id PK "monotonic; the woman's feed queue order"
+        string user_id FK "woman"
+        string profile_id FK "man served to her"
+        datetime shown_at "when the card was served"
+        datetime seen_at "null until the client reports she reached it; the last seen card is her position"
     }
 
     %% ============ SOUTHEAST: CHAT SERVICE ============
@@ -203,7 +217,8 @@ erDiagram
     USER ||--o{ LIKE : "is liked (man)"
     USER ||--o{ MATCH : "as woman"
     USER ||--o{ MATCH : "as man"
-    USER ||--o{ FEED_CURSOR : "discovery feed"
+    USER ||--o| FEED_CANDIDATE : "pool row (eligible men)"
+    USER ||--o{ FEED_IMPRESSION : "cards shown"
 
     %% Southeast: Chat -> Matching/User
     MATCH ||--|| CONVERSATION : "opens"
@@ -362,7 +377,7 @@ erDiagram
 
 # matching-service
 
-Owns discovery, likes, and matches. CRUD for `LIKE`, `MATCH`, `FEED_CURSOR`. Emits `match_created` events → Chat Service creates `CONVERSATION`.
+Owns discovery, likes, and matches. CRUD for `LIKE`, `MATCH`, `FEED_CANDIDATE`, `FEED_IMPRESSION`. Emits `match_created` events → Chat Service creates `CONVERSATION`.
 
 ```mermaid
 erDiagram
@@ -385,10 +400,24 @@ erDiagram
         datetime unmatched_at
         datetime created_at
     }
-    FEED_CURSOR {
-        string user_id PK, FK
-        string last_seen_profile_id
-        int limit
+    FEED_CANDIDATE {
+        string user_id PK, FK "an eligible man (ACTIVE); event-fed projection"
+        date dob
+        double latitude
+        double longitude
+        int height "nullable"
+        string religion "nullable"
+        string education_level "nullable"
+        string drinking "nullable"
+        string smoking "nullable"
+        datetime updated_at
+    }
+    FEED_IMPRESSION {
+        long id PK "monotonic; the woman's feed queue order"
+        string user_id FK "woman"
+        string profile_id FK "man served to her"
+        datetime shown_at "when the card was served"
+        datetime seen_at "null until the client reports she reached it; the last seen card is her position"
     }
 
     %% External references (owned by User / Chat Service)
@@ -404,7 +433,8 @@ erDiagram
     USER ||--o{ LIKE : "is liked (man, external)"
     USER ||--o{ MATCH : "as woman (external)"
     USER ||--o{ MATCH : "as man (external)"
-    USER ||--o{ FEED_CURSOR : "discovery feed (external)"
+    USER ||--o| FEED_CANDIDATE : "pool row (eligible men, external)"
+    USER ||--o{ FEED_IMPRESSION : "cards shown (external)"
     MATCH ||--|| CONVERSATION : "opens (external, event)"
 ```
 
