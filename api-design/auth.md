@@ -61,7 +61,7 @@ Signed **RS256** (RSA-2048), **statelessly verifiable** via Auth Lib with `GET /
 
 **`onb` lifecycle & claim staleness:** `onb` starts `false` and flips to `true` when the users module creates the `USER` row (`POST /users`). Claims are a **snapshot at mint time** — a token minted before onboarding keeps `onb=false` and no `oid` until the client refreshes (`POST /auth/refresh`, which re-resolves current state) or re-logs in. The same staleness applies to `roles` and applies in the direction `true→false` too (a restored/disabled account is only reflected after a refresh). A request authenticated with `onb=false` is legal **only** on `POST /users` (and auth's own refresh/logout); every other resource endpoint rejects it with `403 ONBOARDING_INCOMPLETE` (§2).
 
-**Lifetime:** 15 minutes (configurable 5–30). Clock-skew tolerance: 30 s. **Used in:** `Authorization: Bearer <access_token>` on every request to every module; verified by Auth Lib (signature, `kid`, `iss`, `aud`, `exp`).
+**Lifetime:** 15 minutes (configurable 5–30). Clock-skew tolerance: 30 s (`fold.auth.clock-skew`). **Used in:** `Authorization: Bearer <access_token>` on every request to every module; verified by Auth Lib (signature, `kid`, `iss`, `aud`, `exp`).
 
 ### 1.2 Refresh token (opaque)
 
