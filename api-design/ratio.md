@@ -19,17 +19,17 @@ Client-visible rules live in `user.md` §Admission & queue rules; the mechanics 
 
 | Mechanic | Rule |
 |---|---|
-| Effective gate | `effective_open = mode == AUTO ? (active_women >= active_men from RATIO_STATE) : mode` — `mode` is ratio-local (`AUTO` \| `OPEN` \| `CLOSED` override, §Admin surface). Analytics stays the source of the computed counts; the override never writes `RATIO_STATE`. |
-| Evaluation triggers | every consumed status event (`UserDeactivated`, `UserSuspended`, `UserReactivated`) + a 5-min cadence sweep. |
+| Effective gate | `effective_open = mode == AUTO ? (open_slots > 0) : mode`, where `open_slots = ceil(max_men_per_woman × active_women) − active_men` (counts from `RATIO_STATE`; `max_men_per_woman` = `fold.ratio.max-men-per-woman`, default 1.0; decimal arithmetic so ratios like 0.1 stay exact). Lowering the ratio never evicts anyone — `open_slots` just stays 0 until women catch up. `mode` is ratio-local (`AUTO` \| `OPEN` \| `CLOSED` override, §Admin surface). Analytics stays the source of the computed counts; the override never writes `RATIO_STATE`. |
+| Evaluation triggers | a periodic sweep only (`fold.ratio.promotion-interval`, default 5m). No per-status-event triggers — women joining, men leaving and ratio changes are all picked up by the next sweep. Single running instance assumed (V1). |
 | Enqueue | happens synchronously inside `POST /users` (§Sync gate contract): a man registering while the gate is closed gets an `ADMISSION_QUEUE` row (FIFO by `created_at`) and `status=QUEUED`. |
-| Promotion | while `effective_open`, admit from the front (FIFO, one per evaluation pass is enough — the sweep repeats); emit `AdmittedFromQueue`. |
+| Promotion | each pass fills **every** open slot: fetch the `open_slots` oldest queued men (FIFO by `created_at`, via `UserClient.getQueueHead`) and publish one `AdmittedFromQueue` per man; `users` flips `QUEUED→ACTIVE` on the event. A delayed flip means the next pass re-announces the same men (the flip is idempotent; known V1 side effect: a duplicate "You're in" push). |
 | Counted as active | `ACTIVE` users only. Any other status is excluded from the count. Ratio only needs a dedicated consumed event for transitions that affect the queue or counts (deactivate/suspend/reactivate); other status changes, including shadow-banning, are out of ratio's scope in v1. |
 
 ---
 
 ## Sync gate contract
 
-Owned by the caller (`users` module) per inter-service-communication.md §6; in-process today (`RatioClient.evaluateGenderRatio(region, gender)`), the same DTOs become the HTTP shape after extraction.
+Owned by the caller (`users` module) per inter-service-communication.md §6; in-process today (`RatioClient.isGateOpen()` — **V1 code is single-region, so no `region` argument**; the `region` fields below are the multi-region target shape), the same DTOs become the HTTP shape after extraction.
 
 **Request — `GateCheckRequest`**
 ```json

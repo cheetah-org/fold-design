@@ -61,7 +61,7 @@ Product invariants that drive registration, the admission endpoint, and reactiva
 
 - **Who queues:** men only. Women are always admitted immediately (the product keeps `active_women ≥ active_men`).
 - **Ratio measured at:** region level (`RATIO_STATE.active_women` vs `active_men`, Bangalore metro for V1). Region is derived server-side from the user's geolocation coordinates. `DEACTIVATED`, `SUSPENDED`, `SHADOW_BANNED`, and `QUEUED` users are **not** counted as active for either side.
-- **Gate:** `computed_open = active_women >= active_men` — computed by `ratio` (which holds any manual override); never a stored field (`admission_open` dropped from `RATIO_STATE`).
+- **Gate:** `computed_open = active_men < max_men_per_woman × active_women` (`fold.ratio.max-men-per-woman`, default 1.0) — computed by `ratio` (which holds any manual override); never a stored field (`admission_open` dropped from `RATIO_STATE`).
   - Woman registering → `ACTIVE`.
   - Man registering + gate open → `ACTIVE`.
   - Man registering + gate closed → `QUEUED`, FIFO by onboarding time; `rank` = number of earlier queued men + 1.

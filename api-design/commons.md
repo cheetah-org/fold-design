@@ -159,7 +159,7 @@ Rule: a new code = enum entry **first**, doc row second. Codes are never renamed
 
 ## `commons.security` (folded Auth Lib)
 
-Per decision, the Auth Lib folds into commons. Contents: RS256 JWT verification against `GET /.well-known/jwks.json` (kid-based key pick, 30 s clock-skew, JWKS cache + one refresh on `TOKEN_UNKNOWN_KID`), and the authenticated principal record read off the token:
+Per decision, the Auth Lib folds into commons. Contents: RS256 JWT verification against `GET /.well-known/jwks.json` (kid-based key pick, clock-skew `fold.auth.clock-skew` default 30 s, JWKS cache `fold.auth.cache-ttl` + one refresh on `TOKEN_UNKNOWN_KID`, fetch timeout `fold.auth.jwks-request-timeout`), and the authenticated principal record read off the token:
 
 | Claim | Type | Always | Notes |
 |---|---|---|---|

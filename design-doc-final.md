@@ -6,7 +6,7 @@
 
 ## What Is This
 
-A dating app with one rule: the woman must always be older than the man she matches with. Women browse and choose. Men wait to be chosen. Women always outnumber men on the platform.
+A dating app with one rule: the woman must always be older than the man she matches with. Women browse and choose. Men wait to be chosen. The number of men admitted is capped relative to women by a configurable men:women ratio (1:1 at launch).
 
 ---
 
@@ -26,11 +26,13 @@ A dating app with one rule: the woman must always be older than the man she matc
 - A man is only shown to women who are strictly older than him
 - Age is taken from a user-supplied date of birth at registration (Google ID tokens never carry DOB)
 
-### 2. Women Outnumber Men — Always
-- At any point, the number of active women must be greater than or equal to the number of active men
-- Enforced at region level (derived from user geolocation; Bangalore metro for V1)
-- If a man tries to register when counts are equal, he enters a waiting queue
-- If ratio tips because women leave, new male registrations are paused — notified, not deleted
+### 2. Men:Women Ratio — Capped, Configurable
+- A new man is admitted only while `active_men < max_men_per_woman × active_women`; otherwise he enters a waiting queue
+- `max_men_per_woman` is a config value (`fold.ratio.max-men-per-woman`, default `1.0` = 1:1). Raising it (e.g. `2.0`, `1.5`) admits more men; lowering it never removes anyone — existing men stay and the gate simply stays closed until women catch up
+- With zero active women the gate is closed
+- Designed to be enforced per region (derived from user geolocation). **V1 code is single-region:** there is no `region` parameter, event field or config anywhere in the backend, and counts/queue cover all users. Per-region ratio and a derived `User.region` arrive with multi-region support
+- If the ratio is exceeded because women leave or the ratio is lowered, new male registrations are paused — notified, not deleted
+- Dev: value lives in `application.yml`; planned to move to remote config
 - Active conversations are never interrupted by ratio enforcement
 
 ### 3. Women Browse, Men Receive
