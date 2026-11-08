@@ -2,7 +2,7 @@
 
 Base URL: `https://api.wiingman.in/matching/api/v1` — gateway convention `{baseURL}/{service}/api/v1/{resource}`; all paths below are relative to this base (e.g. `POST https://api.wiingman.in/matching/api/v1/users/{targetId}/likes`) · Content-Type: `application/json` · Dates: ISO-8601 UTC · IDs: UUID
 
-**Module:** `matching` in the Spring Boot modulith. Owns `LIKE`, `MATCH`, and the discovery deck (`FEED_CURSOR` + eligible-men pool — the `discovery` half per inter-service-communication.md §7 (2) is covered by **this** service's API surface; deck endpoints are specced in §Discovery feed below — the ranking/selection algorithm is a build-time decision, deliberately out of this contract). Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
+**Module:** `matching` in the Spring Boot modulith. Owns `LIKE`, `MATCH`, and the discovery deck (`FEED_IMPRESSION` log + `FEED_CANDIDATE` eligible-men pool — the `discovery` half per inter-service-communication.md §7 (2) is covered by **this** service's API surface; deck endpoints are specced in §Discovery feed below — the ranking/selection algorithm is a build-time decision, deliberately out of this contract). Premium surfaces (spotlight, advanced filters, like-delivery insights) are **deferred** — this doc is free-tier only; nothing here precludes bolting them on later.
 
 **Auth:** `Authorization: Bearer <access_token>` — reads `oid`, `onb`, `roles` per `auth.md` §1.1. **Every endpoint requires a valid Bearer token.**
 
@@ -234,7 +234,7 @@ Unmatch — either party (must be a member). Sets `UNMATCHED` + `unmatched_by`/`
 **Women only. Men cannot browse** — product rule, enforced server-side (business rule, no role bypass). Cards are served from the **event-fed eligible-men pool** (inter-service-communication.md L1): men who are `ACTIVE`, **strictly younger** than the caller (narrowable via `max_age`/`min_age` filters), within her distance radius, not blocked either direction, and not already liked/passed by her (passed profiles re-enter the pool after a **7-day cooldown**; she can't re-like until the 30-day cooldown expires).
 
 ### `GET /users/{userId}/feed`
-The woman's deck. Owner check + female-only gate. Cursor-based pagination via `FEED_CURSOR` (server-tracked): a call with no `cursor` continues from the server-stored `last_seen_profile_id` and **advances** it; passing `cursor` re-reads from that point (re-scroll) without advancing.
+The woman's deck. Owner check + female-only gate. Cursor-based pagination over a server-tracked queue (`FEED_IMPRESSION`, which replaced the earlier `FEED_CURSOR`). **Serving a card is not seeing it:** her server-tracked position is the last card the client reported as reached (`POST .../feed/seen`, below). A call with no `cursor` returns the served-but-unseen cards after that position first (so a retry or restart resumes where she actually was), and only picks a fresh batch when none are left. A call with `cursor=<card id>` returns the cards after that card — already-served ones first, else a fresh batch — which is how the client prefetches and re-scrolls.
 
 **Query params:** `?limit=` (default 20, max 50) · `?cursor=` (optional; a card id from a previous `next_cursor`)
 
@@ -282,7 +282,7 @@ Filters narrow the eligible pool before random shuffle. Men missing a filtered f
 | `items` | `PublicUserDto[]` | masked cards, no duplicates within a page; like/pass is **not** done here — cards link out to the matching actions (`POST /users/{targetId}/likes`) |
 | `next_cursor` | string\|null | last card id of the page; `null` = deck exhausted (refill arrives via pool events) |
 
-**Side effect:** each rendered card emits `ProfileViewed { viewer_id, profile_id, source: "DECK" }` → `analytics` (powers "X women viewed your profile today"; profile-open views are emitted by the `users` module with `source: "PROFILE"`).
+**Side effect:** each card the client reports as reached (`POST /users/{userId}/feed/seen`) emits `ProfileViewed { viewer_id, profile_id, source: "DECK" }` → `analytics` (powers "X women viewed your profile today"; profile-open views are emitted by the `users` module with `source: "PROFILE"`).
 
 **Like / pass from a card:** the client calls the matching endpoints directly (`POST /users/{targetId}/likes`, §Likes) — the deck has no embedded action endpoints, and a liked/passed card never reappears (matching state excludes it from the pool view).
 
@@ -327,7 +327,7 @@ Spring Modulith transactional event publication — at-least-once, retried liste
 - **Profile reads:** inbox/match cards embed `PublicUserDto` via the `users` module's `UserClient` (sync, in-process — inter-service-communication.md L3). Masking/mirrored-404 semantics owned there.
 - **Eligibility pool:** the deck is served from the event-fed pool (inter-service-communication.md L1) — `UserRegistered`/`UserDeactivated`/`ProfileUpdated`/`PhotoChanged` listeners maintain it; never per-card sync calls.
 - **View events:** deck cards emit `ProfileViewed(source=DECK)` per rendered card; the `users` module emits `source=PROFILE` on profile open — `analytics` aggregates both for "X women viewed you today" and the weekly summary.
-- **ER synced:** `LIKE.status` includes `EXPIRED`; `FEED_CURSOR` (server-tracked cursor, §Discovery feed) is owned by this module's discovery half; `PROFILE_VIEW_EVENT.source` includes `DECK` — all reflected in `entities/er-diagram.md`.
+- **ER synced:** `LIKE.status` includes `EXPIRED`; `FEED_IMPRESSION` (server-tracked feed position, §Discovery feed) and `FEED_CANDIDATE` (the eligible-men pool) are owned by this module's discovery half; `PROFILE_VIEW_EVENT.source` includes `DECK` — all reflected in `entities/er-diagram.md`.
 - **Deferred (premium):** spotlight boost, advanced feed filters, like-delivery insights — future contract additions; the like/match/deck model above doesn't preclude them.
 
 ---
@@ -346,4 +346,23 @@ Choices made where the contract is silent or ambiguous; the code follows these, 
 - **Paging:** `page` ≥ 0, `size` 1..`fold.matching.max-page-size` (default 20 / max 50), else `422 VALIDATION_ERROR` with field errors.
 - **Unconvertible query/path values** (e.g. `?status=FOO`) → `422 VALIDATION_ERROR` with a `field_errors` entry naming the parameter. This is a global behavior of the shared exception handler (previously `400 INVALID_REQUEST_BODY`), so it applies to every module's endpoints.
 - **Config:** `fold.matching.like-ttl` (48h), `relike-cooldown` (30d), `expiry-sweep-interval` (1h), `default-page-size`, `max-page-size`.
-- **Not in this slice:** the discovery feed (`GET /users/{userId}/feed`, `ProfileViewed`), notification wiring for `LikeReceived`/`MatchCreated`, and the `messaging` consumer that backfills `conversation_id`.
+- **Not in this slice:** notification wiring for `LikeReceived`/`MatchCreated`, and the `messaging` consumer that backfills `conversation_id`. (The discovery feed is covered in the next section.)
+
+---
+
+## Implementation notes — discovery feed (V1 backend)
+
+- **Pool = event-fed projection (`FEED_CANDIDATE`)** in `matching`. Change signals (`UserRegistered`, `UserDeactivated`, `UserSuspended`, `UserShadowBanned`, `UserReactivated`, `AdmittedFromQueue`, and the new `ProfileUpdated`) carry only the user id; the handler re-reads the user's current facts via `UserClient.findFeedProfile` and upserts or removes the row (eligible = `ACTIVE` man). It never depends on event payload completeness or ordering. `PhotoChanged` is not consumed — cards are read live. A reconcile job runs at startup (backfilling existing users) and every `fold.matching.pool-reconcile-interval` (1h) to self-heal drift.
+- **`ProfileUpdated { user_id }`** is new, published on profile edits and on account edits (location).
+- **Blocks are not mirrored** into the pool: each fresh page makes one bulk `UserClient.getBlockedUserIds` call, so a block takes effect immediately.
+- **Served is not seen.** A fresh batch is queued in `FEED_IMPRESSION` with `seen_at` null and fires nothing. Her position is the last card with `seen_at` set.
+- **No `cursor`** → resume: the queued cards after her last seen card (skipping any that became unavailable — blocked, liked, matched, deactivated), up to `limit`; if there are none, a fresh random batch of men she hasn't been shown is picked and queued. `next_cursor` is the last returned card's id; `null` means nothing is queued and nothing fresh is left (deck exhausted).
+- **With `cursor`** (a card id) → the same, but "after that card" instead of "after her last seen card": already-queued cards first, else a fresh batch. This is the client's prefetch/re-scroll call and never changes what she has seen. Unknown cursor → `422 VALIDATION_ERROR` on `cursor`.
+- **New endpoint (contract addition): `POST /users/{userId}/feed/seen`** with body `{ "last_seen_profile_id": "<card id>" }` → `204`. Marks every queued card up to and including that one as seen and emits `ProfileViewed` once for each newly seen card. Idempotent and tolerant of reordering (a repeat or an older card changes nothing). Women only (`403 FORBIDDEN` otherwise); owner check and onboarding gate as elsewhere; blank id → `422`; a card never served to her → `422 VALIDATION_ERROR` on `last_seen_profile_id`. The client should call it as she advances (debounced) and when she leaves the screen; a lost call only delays the event, it never loses her place.
+- **Hidden from her deck:** blocked either way; men with a `PENDING` like; `ACTIVE` matches; likes `PASSED`/`EXPIRED` within `fold.matching.refeed-after-pass` (7d); matches `UNMATCHED` within `relike-cooldown` (30d); cards already shown within `fold.matching.feed-reshow-after` (30d), after which they may appear again.
+- **Rules and filters:** the structural rule uses exact DOB (strictly after her DOB); `min_age`/`max_age` are whole years. `422 VALIDATION_ERROR` (field errors in the query-param names) for: `limit` outside 1..`max-page-size`, non-positive numbers, `min_*` above `max_*`, or `max_age` ≥ her age. `religion`/`education_level` are comma lists, case-insensitive; an unknown value simply matches nobody. Men missing a filtered field are excluded.
+- **Distance:** a bounding box narrows the SQL query, then an exact Haversine check runs in Java (`distance_km`). The candidate set is loaded in memory per fresh page — fine at V1 scale, to be revisited if the pool grows large.
+- **Stale pool rows never shrink a page.** The pool is updated asynchronously, so a just-deactivated man can briefly still be a candidate. A fresh batch keeps drawing from the shuffled pool until it has `limit` visible cards or runs out, and refreshes (so removes) each stale candidate it meets. An empty page therefore always means a genuinely exhausted deck.
+- **`ProfileViewed { viewer_id, profile_id, source: DECK }`** is emitted once per card when it becomes seen (via `.../feed/seen`), never when it is merely served. Nothing consumes it until `analytics` exists.
+- **Retries are safe:** a `GET` that fails in flight loses nothing — the unseen cards stay queued and the next call returns them again. Only a fresh batch is queued by a call, and only when none are left.
+- **Config:** `fold.matching.feed-reshow-after` (30d), `refeed-after-pass` (7d), `pool-reconcile-interval` (1h).

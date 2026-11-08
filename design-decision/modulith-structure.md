@@ -300,7 +300,7 @@ If a module needs data from another module's table, it calls the client interfac
 |---|---|
 | auth | `AUTH_CREDENTIAL`, `REFRESH_SESSION`, `REFRESH_TOKEN` |
 | users | `USER`, `PROFILE`, `PHOTO`, `REPORT`, `BLOCK` |
-| matching | `LIKE`, `MATCH`, `FEED_CURSOR` |
+| matching | `LIKE`, `MATCH`, `FEED_CANDIDATE`, `FEED_IMPRESSION` |
 | messaging | `CONVERSATION`, `CONVERSATION_MEMBER`, `MESSAGE` |
 | notifications | `NOTIFICATION`, `DEVICE_TOKEN`, `NOTIFICATION_PREFERENCE` |
 | ratio | `ADMISSION_QUEUE`, `RATIO_EVENT_LOG` |
