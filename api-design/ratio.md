@@ -165,3 +165,22 @@ Rate limiting is a cross-cutting concern handled by shared infrastructure, not i
 - **`RATIO_STATE` is analytics-owned** — ratio only reads it. The gate override (`mode`) is ratio-local state and deliberately **not** written into `RATIO_STATE`.
 - **Status flips:** ratio never writes `USER.status` — the `users` module applies flips from the events above (mirrors the `SessionRevoked` consume pattern in `notifications.md`).
 - **Client contract:** `user.md` §Admission & queue rules + `GET /users/{userId}/admission` remain the only client-visible surface; this doc's §Sync gate contract defines what feeds it.
+
+---
+
+## Implementation notes — admin surface & audit log (V1 backend)
+
+The four admin routes exist at `ratio/api/v1`: `POST /users/{userId}/admit`, `GET /users/{userId}/ratio-events`, `GET /admission-gate`, `PUT /admission-gate`. Where the build differs from the sections above:
+
+- **Gate (spec difference).** Every route requires the **moderator identity** (`sub = moderator`, minted through the god token), not `DEV` / `ADMIN`: nothing issues those roles yet, so they would be unreachable. Anyone else gets `403 FORBIDDEN`. The check lives in one place (`OperatorGuard`, shared with `analytics`), so swapping in the roles later is a one-line change.
+- **No `{region}`** in the gate paths (V1 has one region and the region concept was removed): `/admission-gate`, and `GateDto` has no `region`.
+- **Gate override.** One row (`admission_gate`); no row means `AUTO`. `effective_open` is `computed_open` in `AUTO`, `true` in `OPEN`, `false` in `CLOSED`, and the same decision now answers `RatioClient.isGateOpen()` at registration.
+  - **`OPEN`** drains the whole queue: the evaluation pass admits every queued man, oldest first, regardless of free slots. **`CLOSED`** admits nobody, even with free slots, and sends every new man to the queue. `AUTO` fills the open slots, as before.
+  - `PUT` with the mode already set changes nothing (200, no pass). Switching to `OPEN` / `CLOSED` runs the promotion pass immediately, in the same transaction; switching back to `AUTO` waits for the next sweep, as the spec says.
+  - `updated_at` is the time of the read (the counts are live), as in `analytics`' `ratio-state`; the time the override was last changed is not exposed.
+  - A bad or missing `mode` is `422 VALIDATION_ERROR` (see `commons.md`: this needed unconvertible enum values in a body to be a 422 globally).
+- **No `ADMISSION_QUEUE` table.** The queue of record is still the users with `status = QUEUED`, ordered by `created_at` (unchanged). The spec's "row-level conditional claim" therefore does not exist: if the sweep and a force-admit pick the same man at the same moment, both publish `AdmittedFromQueue` (the flip is idempotent, since only `QUEUED` men flip) and the audit trail shows two `ADMITTED` entries.
+- **`RATIO_EVENT_LOG` is now written**, in the same transaction as the step it records: `QUEUED` when a man is enqueued (at registration under a closed gate, or on reinstatement), `ADMITTED` on every promotion, `DEACTIVATED` when a queued man deactivates or is shadow-banned. **Addition:** each entry carries `manual` (true for a force-admit, which the spec asks to be "audit-logged as manual" without saying how); `GET /ratio-events` returns it next to `type` and `at`.
+- **Force-admit** answers `404 NOT_FOUND` for a missing user and `409 INVALID_STATE` for anyone not `QUEUED` (so a repeated call after the flip lands is a 409, as the spec warns).
+- **Paging** for the trail: `fold.ratio.default-page-size` (20) / `max-page-size` (100), else `422`. `type` filters by `ADMITTED` / `QUEUED` / `DEACTIVATED`.
+- **Fix found while testing.** The `users` listener for `AdmittedFromQueue` was declared on the generic payload type, which Spring cannot match at runtime, so **a promotion event never flipped anyone to `ACTIVE`** (only the direct `admitFromQueue` call had been tested). It now takes the event envelope and routes on the payload, like every other listener.

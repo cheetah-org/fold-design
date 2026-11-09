@@ -133,6 +133,8 @@ Typed families fix the HTTP status; the `ErrorCode` enum carries the machine-rea
 
 Rule: a new code = enum entry **first**, doc row second. Codes are never renamed (additive-only).
 
+**Unconvertible enum values** (a query / path value, or a field in a JSON body, that is not a member of the enum) are `422 VALIDATION_ERROR` with a `field_errors` entry naming the field. Only syntactically malformed JSON stays `400 INVALID_REQUEST_BODY`. The body case is new with the `ratio` gate override; it applies to every module's request bodies.
+
 ---
 
 ## `commons.error` / `commons.web`
