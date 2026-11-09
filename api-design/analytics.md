@@ -147,7 +147,7 @@ Rate limiting is a cross-cutting concern handled by shared infrastructure, not i
 
 ## Implementation notes — view pipeline & announcements (V1 backend)
 
-This slice builds the view pipeline and the two announcements. The engagement facts are not built yet (see "Not in this slice"), and the `RATIO_STATE` projection is deliberately skipped (see "Deviation" below).
+This covers the view pipeline and the two announcements, then the engagement facts and the admin endpoints (next section). The `RATIO_STATE` projection is deliberately skipped (see "Deviation" below).
 
 - **Raw rows.** Every `ProfileViewed` (deck and profile open) becomes a `profile_view_event` row (`viewer_id`, `profile_id`, `source`, `viewed_at`, `viewed_on`), duplicates included. `viewed_on` is the calendar day in `fold.analytics.zone` (Asia/Kolkata), stamped at consumption.
 - **Only women's views count, on active men.** The event carries ids only, so viewer gender is looked up at counting time through a new `UserClient.getWomenAmong(ids)` (batched, `gender-lookup-batch-size`). Recipients are `ACTIVE` men (`getActiveMaleUserIds`); a man who is deactivated, suspended or shadow-banned by the time the batch runs is skipped.
@@ -158,7 +158,6 @@ This slice builds the view pipeline and the two announcements. The engagement fa
 - **Retention (addition).** The spec keeps raw rows indefinitely, but the deck writes one per card shown. A sweep (`retention-sweep-interval`, 1h) deletes rows older than `view-retention` (30d), which covers the 7-day window with margin.
 - **Profile opens.** `GET /users/{userId}` now publishes `ProfileViewed { source: PROFILE }` when a caller other than the owner (and not through the self / `DEV` / `ADMIN` view) opens a profile; see `user.md`.
 - **Known limit.** Counting loads the window's distinct (profile, viewer, day) rows into memory and resolves them in Java. Fine at V1 volume; a larger deployment would push the gender join into SQL or pre-aggregate.
-- **Not in this slice:** the engagement facts and the admin endpoints (next slice).
 
 ### Deviation — no `RATIO_STATE` projection in V1
 
@@ -167,3 +166,14 @@ The `RATIO_STATE` table, its event-fed ±1 counters and the hourly reconciliatio
 - **Why.** The counts decide who is admitted, and a live read can never drift. An asynchronous, at-least-once projection can: a duplicated or dropped event skews it until the next reconcile, so the gate could over-admit or stall the queue for up to an hour. The spec's reason for the projection (analytics owning the counts once services are split) does not apply while everything runs in one process, where it would only be a second source of truth.
 - **Consequences.** `POST /ratio-state/recompute` has nothing to recompute and is dropped. `GET /ratio-state` stays as a plain admin read of the live counts. The `ratio_snapshot` on engagement facts takes the live counts at bucket close.
 - **When to revisit.** On extracting `analytics` (or `users`) into its own service, or when a history of the counts is wanted. The `AnalyticsClient` seam is unchanged, so `ratio` would not need to change.
+---
+
+## Implementation notes — engagement facts & admin surface (V1 backend)
+
+- **Counting.** `LikeReceived`, `MatchCreated` and `UserRegistered` each add 1 to the `likes` / `matches` / `new_users` of **both** the event's hour row and its day row (so the day is always current; it is not rolled up later). Counts are atomic increments, and the row is created on first use (two writers racing to create it settle on the unique key `(bucket, period_start)`), so concurrent events never lose a count. The bucket comes from the event's own publish time, so an event handled just after the hour turns still lands in the hour it happened in.
+- **Buckets follow the analytics zone (spec difference).** Hours and days start on the hour / midnight of `fold.analytics.zone` (Asia/Kolkata), not UTC, so a day's `period_start` is `18:30Z` of the previous UTC day. The spec's example shows a UTC midnight.
+- **Ratio snapshot at close.** A job (`engagement-close-cron`, five past each hour) records the active women and men on every ended bucket that still has none, and makes sure the hour that just ended, and its day, have a row even if nothing happened (so the series has no holes after an uneventful hour). The counts are the live ones read at that moment, a few minutes after the bucket ended (see the `RATIO_STATE` deviation above). `ratio_snapshot` is `null` while a bucket is open. A missed run is made up by the next one for existing rows, but an hour with no events *and* no run stays absent.
+- **Best-effort counts.** Events are counted once per delivery, with no per-event dedupe, so a redelivered event would be counted twice. Today's listeners do not redeliver; revisit if a durable, retrying event bus is added.
+- **Admin surface.** `GET /analytics/api/v1/ratio-state` → `{ active_women, active_men, updated_at }`, the live counts as the gate sees them (`updated_at` is the read time). `GET /analytics/api/v1/engagement?bucket=hour|day&from=&to=&page=&size=` → `PagedDto<EngagementFact>` newest first; `bucket` defaults to `day`, the range is `[from, to)` on `period_start` (default: everything up to now), `size` defaults to 24 (max 100). A bad `bucket`, `from` after `to`, or bad paging is `422 VALIDATION_ERROR`.
+- **No `{region}` in the paths** (V1 has one region, and the region concept was removed), and **`POST /ratio-state/recompute` is dropped** (see the `RATIO_STATE` deviation).
+- **Gate (spec difference).** The spec requires the `DEV` / `ADMIN` role, but nothing in the system mints those roles: tokens only ever carry `USER`. The routes instead require the **moderator identity** (`sub = moderator`, minted through the god token), the same privileged identity the moderation APIs use; anyone else gets `403 FORBIDDEN`. When `DEV` / `ADMIN` role granting exists, swap the check in one place (`AnalyticsAccess`).
