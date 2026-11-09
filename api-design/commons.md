@@ -86,7 +86,7 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 | `users.UserDeactivated` | `{ user_id, credential_id }` | users → messaging, ratio, notifications, matching |
 | `users.UserShadowBanned` | `{ user_id }` | users → notifications, analytics |
 | `users.UserSuspended` | `{ user_id }` | users → matching, notifications, ratio |
-| `users.UserReactivated` | `{ user_id }` | users → matching, notifications, ratio |
+| `users.UserReactivated` | `{ user_id, gender, previous_status }` — `previous_status` is `SUSPENDED` \| `SHADOW_BANNED` (what the reactivation lifted) | users → matching, notifications, ratio |
 | `users.ReportFiled` | `{ report_id, reporter_id, reported_id, category }` | users → analytics |
 | `users.ReportResolved` | `{ report_id, decision, reported_id, reporter_id }` | users → analytics |
 | `users.BlockCreated` | `{ blocker_id, blocked_id }` | users → matching, messaging |
