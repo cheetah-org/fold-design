@@ -283,6 +283,8 @@ All profile fields except `bio`, `description`, and `photos` are nullable — om
 ### `GET /users/{userId}`
 Self / DEV / ADMIN → 200 full `AccountResponse`; any other `USER` → 200 `PublicUserDto`; anything else → `404 USER_NOT_VISIBLE` (hidden **or** no row — un-onboarded credentials have no `userId` to target, see header notes). **Masking never applies to self** (review fix): a `QUEUED`/`SHADOW_BANNED` caller always gets their own full `AccountResponse`.
 
+Opening someone else's profile through the public branch publishes `ProfileViewed { source: PROFILE }` (consumed by `analytics`); the self / `DEV` / `ADMIN` full view does not.
+
 **Response 200 — full**
 ```json
 {

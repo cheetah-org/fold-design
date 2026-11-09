@@ -67,7 +67,7 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 
 | Interface | Producer | Consumed by | Methods (doc source) |
 |---|---|---|---|
-| `UserClient` | `users` | `auth`, `matching`, `messaging`, `notifications`, `analytics` | `getPublicProfile(userId) → PublicUserResponse` (`user.md` §GET masked) · `lookupByCredential(credentialId) → Optional<UserId>` (`auth.md` §1.1 onb/oid resolution) · `getStatus(userId) → UserStatus` (`auth.md` §3 status gate) · `getActiveGenderCounts(region) → { women, men }` (`analytics.md` reconciliation) |
+| `UserClient` | `users` | `auth`, `matching`, `messaging`, `notifications`, `analytics` | `getPublicProfile(userId) → PublicUserResponse` (`user.md` §GET masked) · `lookupByCredential(credentialId) → Optional<UserId>` (`auth.md` §1.1 onb/oid resolution) · `getStatus(userId) → UserStatus` (`auth.md` §3 status gate) · `getActiveGenderCounts(region) → { women, men }` (`analytics.md` reconciliation) · `getWomenAmong(userIds) → Set<UserId>` (`analytics.md` view counting: addition — which of these viewers are women, whatever their status) |
 | `RatioClient` | `ratio` | `users` | `evaluateGenderRatio(region, gender) → GateDecisionDto` (`ratio.md` §Sync gate contract) |
 | `AnalyticsClient` | `analytics` | `ratio` | `getRatioState(region) → RatioStateDto` (`analytics.md` §Sync client contract) |
 | `MatchingClient` | `matching` | `messaging` | `getMatch(matchId) → MatchInfo { match_id, woman_id, man_id, status }` and the batch `getMatches(matchIds) → Map<matchId, MatchInfo>` for list masking (`messaging.md` — thread creation + masking checks) |
