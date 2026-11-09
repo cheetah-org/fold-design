@@ -157,7 +157,6 @@ erDiagram
         string id PK
         string conversation_id FK
         string user_id FK
-        boolean visible
         string last_read_message_id "drives unread badge count"
         datetime cleared_at "self-clear timestamp; distinct from visible (masking)"
     }
@@ -454,7 +453,6 @@ erDiagram
         string id PK
         string conversation_id FK
         string user_id FK
-        boolean visible
         string last_read_message_id "drives unread badge count"
         datetime cleared_at "self-clear timestamp; distinct from visible (masking)"
     }

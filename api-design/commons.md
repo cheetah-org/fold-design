@@ -70,7 +70,7 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 | `UserClient` | `users` | `auth`, `matching`, `messaging`, `notifications`, `analytics` | `getPublicProfile(userId) → PublicUserResponse` (`user.md` §GET masked) · `lookupByCredential(credentialId) → Optional<UserId>` (`auth.md` §1.1 onb/oid resolution) · `getStatus(userId) → UserStatus` (`auth.md` §3 status gate) · `getActiveGenderCounts(region) → { women, men }` (`analytics.md` reconciliation) |
 | `RatioClient` | `ratio` | `users` | `evaluateGenderRatio(region, gender) → GateDecisionDto` (`ratio.md` §Sync gate contract) |
 | `AnalyticsClient` | `analytics` | `ratio` | `getRatioState(region) → RatioStateDto` (`analytics.md` §Sync client contract) |
-| `MatchingClient` | `matching` | `messaging` | `getMatch(matchId) → MatchInfo { match_id, woman_id, man_id, status }` (`messaging.md` — thread creation + masking checks) |
+| `MatchingClient` | `matching` | `messaging` | `getMatch(matchId) → MatchInfo { match_id, woman_id, man_id, status }` and the batch `getMatches(matchIds) → Map<matchId, MatchInfo>` for list masking (`messaging.md` — thread creation + masking checks) |
 
 ---
 
@@ -100,7 +100,8 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 | `ratio.AdmittedFromQueue` | `{ user_id, rank, total_waiting, estimated_wait_ms }` | ratio → users, notifications |
 | `analytics.DailyViewCountReady` | `{ user_id, count, window: "daily" }` | analytics → notifications (VIEW push) |
 | `analytics.WeeklySummaryReady` | `{ user_id, views, window: "weekly" }` | analytics → notifications (WEEKLY_SUMMARY email) |
-| `messaging.MessageExpiring` | `{ conversation_id, expires_at }` | messaging → notifications (EXPIRY push + email) |
+| `messaging.ConversationCreated` | `{ conversation_id, match_id }` | messaging → matching (records `match.conversation_id`) |
+| `messaging.MessageExpiring` | `{ conversation_id, expires_at, recipient_ids }` | messaging → notifications (EXPIRY inbox + push + email). `recipient_ids` is an addition: messaging filters out members who cleared the thread and any ended/masked thread. |
 
 ---
 
