@@ -208,3 +208,20 @@ Removed for now — chat flood/abuse controls will be defined together with the 
 - **`UserClient`** provides counterpart cards (`PublicUserDto`) and status (`DEACTIVATED` masking); `user.md` masking semantics apply verbatim.
 - **No new-message push:** product specifies push for likes/matches/expiry — offline message catch-up is the client's refetch on reconnect.
 - **Unsend/read receipts:** deliberately absent — nothing in this API mutates or reveals delivery/read state after send.
+
+---
+
+## Implementation notes — core chat (V1 backend)
+
+Choices made where the contract is silent or differs; the code follows these.
+
+- **Thread creation.** `MatchCreated` (handled asynchronously) creates the `CONVERSATION` and its two members, idempotent on `match_id`. It then publishes **`ConversationCreated { conversation_id, match_id }`** (contract addition — the spec said the id "backfills" without saying how); `matching` records it as `match.conversation_id`, first recorded id wins. So `conversation_id` is `null` on the match for a moment after it is created.
+- **Masking is derived live, not stored.** A thread is masked (`USER_NO_LONGER_EXISTS`, no `counterpart`) when the match is `UNMATCHED` (or gone), or the counterpart is not visible to the viewer through `UserClient` — blocked either way, deactivated, suspended, shadow-banned. So `CONVERSATION_MEMBER.visible` does not exist, `UserDeactivated` / `BlockCreated` / `BlockRemoved` are not consumed, and lifting a block restores the thread by itself. A shadow-banned sender's thread therefore looks masked to the counterpart, which is how "their messages don't deliver" is honoured.
+- **Unmatch (`MatchDeleted`).** All messages are purged for both sides; the initiator's `cleared_at` is set (their view disappears at once); the other side keeps the now-empty masked thread until they clear it. Idempotent.
+- **Clearing.** Sets the caller's `cleared_at` only; a cleared thread answers `404` to that member's history, send and read. When both members have cleared (or one cleared and the other was the unmatch initiator), the conversation becomes `DELETED` and any remaining messages are removed.
+- **Strict privacy.** Every endpoint requires `oid == userId` — no role bypass, moderators included (unlike the matching endpoints).
+- **Unread badge.** Counts the *other* side's messages after the member's `last_read_message_id`; their own messages never count. The marker only moves forward (reading an older message leaves it). If the marker message has already expired, every remaining message from the other side counts.
+- **History.** Newest first, keyset on `before=<messageId>` (ordered by send time, id as tie-break). `limit` defaults to 50 and is capped by `fold.messaging.max-history-limit` (100); an unknown `before` or an out-of-range `limit` is `422 VALIDATION_ERROR`. `total` is the number of messages in the thread. The conversation list's `page`/`size` are validated the same way as in matching.
+- **Sending.** Guards in the documented order; a masked thread answers `404 USER_NOT_VISIBLE`. `body` must be non-blank and at most `fold.messaging.max-body-length` (2000) characters.
+- **Config:** `fold.messaging.message-ttl` (48h), `sweep-interval` (1m), `max-body-length`, `default-history-limit`, `max-history-limit`, `default-page-size`, `max-page-size`.
+- **Not in this slice:** WebSocket delivery, and the `MessageExpiring` warning with its notification.
