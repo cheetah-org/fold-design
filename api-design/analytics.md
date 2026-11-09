@@ -142,3 +142,20 @@ Rate limiting is a cross-cutting concern handled by shared infrastructure, not i
 - **`users`** is the source of truth for reconciliation counts (`UserClient.getActiveGenderCounts(region)` — added to the `commons.md` catalog).
 - **Emitters:** `ProfileViewed` arrives from `matching` (deck renders, `matching.md` §Discovery feed) and `users` (profile opens, `user.md`).
 - **ER synced:** `RATIO_STATE.region` (was `city`), `ENGAGEMENT_FACT.region` + `period_start` — all reflected in `entities/er-diagram.md`.
+
+---
+
+## Implementation notes — view pipeline & announcements (V1 backend)
+
+This slice builds the view pipeline and the two announcements. The `RATIO_STATE` projection and engagement facts are not built yet (see "Not in this slice").
+
+- **Raw rows.** Every `ProfileViewed` (deck and profile open) becomes a `profile_view_event` row (`viewer_id`, `profile_id`, `source`, `viewed_at`, `viewed_on`), duplicates included. `viewed_on` is the calendar day in `fold.analytics.zone` (Asia/Kolkata), stamped at consumption.
+- **Only women's views count, on active men.** The event carries ids only, so viewer gender is looked up at counting time through a new `UserClient.getWomenAmong(ids)` (batched, `gender-lookup-batch-size`). Recipients are `ACTIVE` men (`getActiveMaleUserIds`); a man who is deactivated, suspended or shadow-banned by the time the batch runs is skipped.
+- **Daily.** Distinct women who viewed the man in the trailing `daily-window` (24h) → `DailyViewCountReady`. **Weekly.** Views in the trailing `weekly-window` (7d), where a view is one woman × one day, as the spec defines a view (so a woman who looks on three different days counts 3) → `WeeklySummaryReady`.
+- **Zero is silent (addition).** A man with no views from women gets nothing, so nobody is told "0 women viewed you".
+- **Batch key includes the period (spec fix).** The spec keys batches on `user_id + window`, but notifications dedupes on its event key forever, so the second day would be dropped. The announcement's event id is `daily:<user_id>:<yyyy-mm-dd>` (zone date) and `weekly:<user_id>:<iso-year>-W<week>`. A re-run in the same period repeats the id and is deduplicated; the next period gets a new one.
+- **Schedules in config:** `daily-cron` (09:00), `weekly-cron` (Sunday 03:00), both read in `zone`. The jobs assume a **single running instance**; with several, every instance would run the batch (harmless because of the dedupe keys, but wasteful).
+- **Retention (addition).** The spec keeps raw rows indefinitely, but the deck writes one per card shown. A sweep (`retention-sweep-interval`, 1h) deletes rows older than `view-retention` (30d), which covers the 7-day window with margin.
+- **Profile opens.** `GET /users/{userId}` now publishes `ProfileViewed { source: PROFILE }` when a caller other than the owner (and not through the self / `DEV` / `ADMIN` view) opens a profile; see `user.md`.
+- **Known limit.** Counting loads the window's distinct (profile, viewer, day) rows into memory and resolves them in Java. Fine at V1 volume; a larger deployment would push the gender join into SQL or pre-aggregate.
+- **Not in this slice:** the `RATIO_STATE` projection, the engagement facts, and the admin endpoints. `AnalyticsClient.getRatioState()` still reads live counts from `users`.
