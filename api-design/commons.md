@@ -101,7 +101,7 @@ users owns InProcessUserClient @Bean; Spring wires it into auth/matching/messagi
 | `analytics.DailyViewCountReady` | `{ user_id, count, window: "daily" }` | analytics → notifications (VIEW push) |
 | `analytics.WeeklySummaryReady` | `{ user_id, views, window: "weekly" }` | analytics → notifications (WEEKLY_SUMMARY email) |
 | `messaging.ConversationCreated` | `{ conversation_id, match_id }` | messaging → matching (records `match.conversation_id`) |
-| `messaging.MessageExpiring` | `{ conversation_id, expires_at }` | messaging → notifications (EXPIRY push + email) |
+| `messaging.MessageExpiring` | `{ conversation_id, expires_at, recipient_ids }` | messaging → notifications (EXPIRY inbox + push + email). `recipient_ids` is an addition: messaging filters out members who cleared the thread and any ended/masked thread. |
 
 ---
 
