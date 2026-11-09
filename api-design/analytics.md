@@ -147,7 +147,7 @@ Rate limiting is a cross-cutting concern handled by shared infrastructure, not i
 
 ## Implementation notes — view pipeline & announcements (V1 backend)
 
-This slice builds the view pipeline and the two announcements. The `RATIO_STATE` projection and engagement facts are not built yet (see "Not in this slice").
+This slice builds the view pipeline and the two announcements. The engagement facts are not built yet (see "Not in this slice"), and the `RATIO_STATE` projection is deliberately skipped (see "Deviation" below).
 
 - **Raw rows.** Every `ProfileViewed` (deck and profile open) becomes a `profile_view_event` row (`viewer_id`, `profile_id`, `source`, `viewed_at`, `viewed_on`), duplicates included. `viewed_on` is the calendar day in `fold.analytics.zone` (Asia/Kolkata), stamped at consumption.
 - **Only women's views count, on active men.** The event carries ids only, so viewer gender is looked up at counting time through a new `UserClient.getWomenAmong(ids)` (batched, `gender-lookup-batch-size`). Recipients are `ACTIVE` men (`getActiveMaleUserIds`); a man who is deactivated, suspended or shadow-banned by the time the batch runs is skipped.
@@ -158,4 +158,12 @@ This slice builds the view pipeline and the two announcements. The `RATIO_STATE`
 - **Retention (addition).** The spec keeps raw rows indefinitely, but the deck writes one per card shown. A sweep (`retention-sweep-interval`, 1h) deletes rows older than `view-retention` (30d), which covers the 7-day window with margin.
 - **Profile opens.** `GET /users/{userId}` now publishes `ProfileViewed { source: PROFILE }` when a caller other than the owner (and not through the self / `DEV` / `ADMIN` view) opens a profile; see `user.md`.
 - **Known limit.** Counting loads the window's distinct (profile, viewer, day) rows into memory and resolves them in Java. Fine at V1 volume; a larger deployment would push the gender join into SQL or pre-aggregate.
-- **Not in this slice:** the `RATIO_STATE` projection, the engagement facts, and the admin endpoints. `AnalyticsClient.getRatioState()` still reads live counts from `users`.
+- **Not in this slice:** the engagement facts and the admin endpoints (next slice).
+
+### Deviation — no `RATIO_STATE` projection in V1
+
+The `RATIO_STATE` table, its event-fed ±1 counters and the hourly reconciliation are **deliberately not built**. `AnalyticsClient.getRatioState()` reads the live active-women / active-men counts from `users` (`UserClient.getActiveGenderCounts()`), as `ratio` already does for the gate and the queue-promotion sweep.
+
+- **Why.** The counts decide who is admitted, and a live read can never drift. An asynchronous, at-least-once projection can: a duplicated or dropped event skews it until the next reconcile, so the gate could over-admit or stall the queue for up to an hour. The spec's reason for the projection (analytics owning the counts once services are split) does not apply while everything runs in one process, where it would only be a second source of truth.
+- **Consequences.** `POST /ratio-state/recompute` has nothing to recompute and is dropped. `GET /ratio-state` stays as a plain admin read of the live counts. The `ratio_snapshot` on engagement facts takes the live counts at bucket close.
+- **When to revisit.** On extracting `analytics` (or `users`) into its own service, or when a history of the counts is wanted. The `AnalyticsClient` seam is unchanged, so `ratio` would not need to change.
